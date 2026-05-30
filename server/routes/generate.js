@@ -11,8 +11,13 @@ router.post('/', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'All fields are required: topic, difficulty, stack, hours_per_week' });
         }
 
+        let aiUrl = process.env.AI_SERVICE_URL;
+        if (!aiUrl.startsWith('http')) {
+            aiUrl = `http://${aiUrl}`;
+        }
+
         const aiResponse = await axios.post(
-            `${process.env.AI_SERVICE_URL}/generate`,
+            `${aiUrl}/generate`,
             { topic, difficulty, stack, hours_per_week }
         );
 
