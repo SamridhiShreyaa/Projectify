@@ -13,12 +13,12 @@ services:
         sync: false # You will set this manually in the Render dashboard
       - key: JWT_SECRET
         generateValue: true
-      # This automatically links the AI_SERVICE_URL to the internal URL of the AI service below
+      # This automatically links the AI_SERVICE_URL to the external URL of the AI service below
       - key: AI_SERVICE_URL
         fromService:
           type: web
           name: projectify-ai
-          envVarKey: RENDER_INTERNAL_HOSTNAME
+          envVarKey: RENDER_EXTERNAL_URL
 
   # Python FastAPI AI Service
   - type: web
