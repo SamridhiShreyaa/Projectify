@@ -1,4 +1,4 @@
-# Projectify ⚡
+# Projectify
 
 **AI-Powered Project Idea Generator** — A full-stack application that generates complete project briefs using a chained AI pipeline.
 
