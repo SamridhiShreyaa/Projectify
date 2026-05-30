@@ -1,8 +1,4 @@
-node_modules/
-__pycache__/
+node_modules
 .env
-*.pyc
-venv/
-dist/
-build/
+.mongodb-data
 .DS_Store
