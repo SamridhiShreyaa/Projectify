@@ -1,0 +1,30 @@
+services:
+  # Node.js Backend API
+  - type: web
+    name: projectify-api
+    env: node
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false # You will set this manually in the Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      # This automatically links the AI_SERVICE_URL to the internal URL of the AI service below
+      - key: AI_SERVICE_URL
+        fromService:
+          type: web
+          name: projectify-ai
+          envVarKey: RENDER_INTERNAL_HOSTNAME
+
+  # Python FastAPI AI Service
+  - type: web
+    name: projectify-ai
+    env: python
+    buildCommand: cd ai_service && pip install -r requirements.txt
+    startCommand: cd ai_service && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12

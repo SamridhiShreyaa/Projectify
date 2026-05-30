@@ -1,0 +1,19 @@
+{
+    "name": "projectify-server",
+    "version": "1.0.0",
+    "description": "Projectify Node.js API gateway",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "node --watch index.js"
+    },
+    "dependencies": {
+        "axios": "^1.7.0",
+        "bcrypt": "^5.1.1",
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.0",
+        "express": "^4.21.0",
+        "jsonwebtoken": "^9.0.2",
+        "mongoose": "^8.8.0"
+    }
+}
