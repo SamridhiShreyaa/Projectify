@@ -3,6 +3,7 @@ services:
   - type: web
     name: projectify-api
     env: node
+    plan: free
     buildCommand: cd server && npm install
     startCommand: cd server && npm start
     envVars:
@@ -23,6 +24,7 @@ services:
   - type: web
     name: projectify-ai
     env: python
+    plan: free
     buildCommand: cd ai_service && pip install -r requirements.txt
     startCommand: cd ai_service && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
