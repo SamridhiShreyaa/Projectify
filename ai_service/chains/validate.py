@@ -47,7 +47,7 @@ Stretch goals: {stretches}
 
 Rules:
 - beginner + <5 hrs/week → max 3 core features
-- beginner + 5-10 hrs/week → max 4 core features  
+- beginner + 5-10 hrs/week → max 4 core features
 - intermediate → max 5 core features
 - advanced → keep all features
 - If features are too advanced for the difficulty level, replace them with simpler equivalents

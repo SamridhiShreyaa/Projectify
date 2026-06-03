@@ -5,7 +5,6 @@ Uses LangChain + OpenRouter to generate a project idea from user inputs.
 Falls back to mock mode if OPENROUTER_API_KEY is not set.
 """
 import os
-import json
 import random
 from pydantic import BaseModel, Field
 from typing import List
@@ -27,7 +26,7 @@ def _get_prompt():
     if _IDEA_PROMPT is None:
         from langchain_core.prompts import ChatPromptTemplate
         _IDEA_PROMPT = ChatPromptTemplate.from_messages([
-            ("system", """You are a senior software engineering mentor. 
+            ("system", """You are a senior software engineering mentor.
 Generate a realistic, buildable project idea given the constraints.
 Respond ONLY with valid JSON matching this exact schema:
 {{

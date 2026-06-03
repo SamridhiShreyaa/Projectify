@@ -58,7 +58,7 @@ Requirements:
 1. Milestones: 4 weekly milestones that build on each other. Each should reference specific features.
 2. File structure: A realistic folder/file tree for this specific project and stack. Not generic.
 3. Learning outcomes: 4 concrete skills the developer gains from this exact project.
-4. Resources: 4 real, specific URLs relevant to this stack and project type. 
+4. Resources: 4 real, specific URLs relevant to this stack and project type.
    Prefer official docs, not tutorials. Format: "Name — https://url"
 
 Make everything specific to this project, not boilerplate.""")

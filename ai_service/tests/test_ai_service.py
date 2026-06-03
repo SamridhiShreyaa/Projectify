@@ -9,9 +9,8 @@ Covers:
 - Chain logic (idea, validate, expand) in mock mode
 - Response shape correctness
 """
-import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import sys
 import os
 
@@ -230,7 +229,6 @@ class TestRateLimiting:
         assert "detail" in res.json()
 
     def test_rate_limit_resets_after_window(self):
-        import time
         for _ in range(5):
             client.post("/generate", json=VALID_PAYLOAD)
 
