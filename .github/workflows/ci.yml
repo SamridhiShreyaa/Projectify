@@ -1,0 +1,141 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Test AI Service (Python/FastAPI)
+  # ─────────────────────────────────────────────
+  test-ai-service:
+    name: Test AI Service
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ai_service
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ai_service/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest httpx pytest-cov
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short --cov=. --cov-report=term-missing
+        env:
+          # No API keys — forces mock mode for all tests
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check . --select=E,F,W --ignore=E501
+
+
+  # ─────────────────────────────────────────────
+  # Job 2: Test Node.js Server
+  # ─────────────────────────────────────────────
+  test-server:
+    name: Test Server
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --forceExit --detectOpenHandles
+        env:
+          JWT_SECRET: test-secret-key-for-ci
+          AI_SERVICE_URL: http://localhost:8001
+          MONGO_URI: "" # handled by mongodb-memory-server
+
+
+  # ─────────────────────────────────────────────
+  # Job 3: Build all Docker images
+  # ─────────────────────────────────────────────
+  build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    # Only runs if both test jobs pass
+    needs: [test-ai-service, test-server]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env for build check
+        run: |
+          echo "OPENROUTER_API_KEY=placeholder" > .env
+          echo "JWT_SECRET=placeholder" >> .env
+          echo "MONGO_URI=placeholder" >> .env
+          echo "AI_SERVICE_URL=http://ai_service:8001" >> .env
+
+      - name: Build all services
+        run: docker compose build --no-cache
+
+      - name: Verify containers start
+        run: |
+          docker compose up -d
+          sleep 10
+          docker compose ps
+          docker compose down
+
+
+  # ─────────────────────────────────────────────
+  # Job 4: Post-deploy smoke test (main only)
+  # ─────────────────────────────────────────────
+  smoke-test:
+    name: Post-Deploy Smoke Test
+    runs-on: ubuntu-latest
+    # Only runs on push to main, after build passes
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Wait for Render to deploy
+        # Render picks up the push and starts deploying.
+        # 60s is usually enough for the service to restart.
+        run: sleep 60
+
+      - name: Check AI service health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.AI_SERVICE_URL }}/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "AI service health check failed with status $STATUS"
+            exit 1
+          fi
+          echo "AI service is healthy (HTTP $STATUS)"
+
+      - name: Check server health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.SERVER_URL }}/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "Server health check failed with status $STATUS"
+            exit 1
+          fi
+          echo "Server is healthy (HTTP $STATUS)"

@@ -13,6 +13,7 @@ app.use('/api/generate', require('./routes/generate'));
 app.use('/api/projects', require('./routes/projects'));
 
 // Health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/health', (req, res) => {
     res.json({
         status: mongoose.connection.readyState === 1 ? 'ok' : 'db_connecting',
@@ -35,7 +36,7 @@ const connectDB = async () => {
 };
 
 // Start server immediately, connect to DB in background
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    connectDB();
-});
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+}
+module.exports = app;

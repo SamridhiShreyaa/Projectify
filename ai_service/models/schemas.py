@@ -1,19 +1,39 @@
-from pydantic import BaseModel
+"""
+Pydantic schemas for request/response validation.
+"""
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import List, Optional
 
 
 class GenerateRequest(BaseModel):
-    topic: str
-    difficulty: str       # "beginner", "intermediate", "advanced"
-    stack: str
-    hours_per_week: int
+    topic: str = Field(..., min_length=3, max_length=200, description="Project topic or domain")
+    difficulty: str = Field(..., description="beginner | intermediate | advanced")
+    stack: str = Field(..., min_length=2, max_length=200, description="Tech stack")
+    hours_per_week: int = Field(..., ge=1, le=80, description="Available hours per week")
+
+    @field_validator("difficulty")
+    @classmethod
+    def difficulty_must_be_valid(cls, v: str) -> str:
+        valid = {"beginner", "intermediate", "advanced"}
+        if v not in valid:
+            raise ValueError(f"difficulty must be one of: {', '.join(valid)}")
+        return v
+
+    @field_validator("topic", "stack")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
 
 
 class ProjectOutput(BaseModel):
     title: str
     description: str
-    core_features: list[str]
-    stretch_goals: list[str]
+    core_features: List[str]
+    stretch_goals: List[str]
+    scope_notes: Optional[str] = ""
+    milestones: List[str]
     file_structure: str
-    milestones: list[str]
-    learning_outcomes: list[str]
-    resources: list[str]
+    learning_outcomes: List[str]
+    resources: List[str]
+
+    model_config = ConfigDict(extra="allow")

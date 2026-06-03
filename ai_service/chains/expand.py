@@ -1,81 +1,154 @@
 """
-Chain 3 — Expander (Mock Mode)
+Chain 3 — Expander
 
-In production, this would use LangChain to expand into full project brief.
-For development, we generate realistic milestones, file structure, and resources.
+Uses LangChain + OpenRouter to expand a validated idea into a full project brief.
+Falls back to template mock if OPENROUTER_API_KEY is not set.
 """
+import os
+import json
 import random
+from pydantic import BaseModel, Field
+from typing import List
 
 
+# ---------- Output schema ----------
+class ExpandedProject(BaseModel):
+    title: str
+    description: str
+    core_features: List[str]
+    stretch_goals: List[str]
+    scope_notes: str = ""
+    milestones: List[str] = Field(description="4 weekly milestones")
+    file_structure: str = Field(description="Suggested folder/file structure as plain text")
+    learning_outcomes: List[str] = Field(description="4 things the developer will learn")
+    resources: List[str] = Field(description="4 specific, relevant learning resources with URLs")
+
+
+# ---------- Prompt (built lazily) ----------
+_EXPAND_PROMPT = None
+
+def _get_prompt():
+    global _EXPAND_PROMPT
+    if _EXPAND_PROMPT is None:
+        from langchain_core.prompts import ChatPromptTemplate
+        _EXPAND_PROMPT = ChatPromptTemplate.from_messages([
+            ("system", """You are a senior software engineering mentor creating a full project brief.
+Respond ONLY with valid JSON — no markdown fences, no explanation.
+Schema:
+{{
+  "title": "string",
+  "description": "string",
+  "core_features": ["string", ...],
+  "stretch_goals": ["string", ...],
+  "scope_notes": "string",
+  "milestones": ["string", ...],      // exactly 4 weekly milestones
+  "file_structure": "string",         // plain text folder tree
+  "learning_outcomes": ["string", ...], // exactly 4 items
+  "resources": ["string", ...]        // exactly 4 items, format: "Name — https://url"
+}}"""),
+            ("human", """Expand this project into a full brief:
+
+Title: {title}
+Description: {description}
+Core features: {features}
+Tech stack: {stack}
+Scope notes: {scope_notes}
+
+Requirements:
+1. Milestones: 4 weekly milestones that build on each other. Each should reference specific features.
+2. File structure: A realistic folder/file tree for this specific project and stack. Not generic.
+3. Learning outcomes: 4 concrete skills the developer gains from this exact project.
+4. Resources: 4 real, specific URLs relevant to this stack and project type. 
+   Prefer official docs, not tutorials. Format: "Name — https://url"
+
+Make everything specific to this project, not boilerplate.""")
+        ])
+    return _EXPAND_PROMPT
+
+
+def _get_llm():
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+    if not api_key:
+        return None
+
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model="meta-llama/llama-3.3-70b-instruct:free",
+        api_key=api_key,
+        base_url=base_url,
+        temperature=0.6,
+        max_tokens=1200,
+    )
+
+
+def expand_project(project: dict, stack: str = "") -> dict:
+    """Expand project into full brief. Uses LLM if available, falls back to mock."""
+    llm = _get_llm()
+
+    if llm:
+        try:
+            from langchain_core.output_parsers import JsonOutputParser
+            parser = JsonOutputParser(pydantic_object=ExpandedProject)
+            chain = _get_prompt() | llm | parser
+            result = chain.invoke({
+                "title": project.get("title", ""),
+                "description": project.get("description", ""),
+                "features": json.dumps(project.get("core_features", [])),
+                "stack": stack,
+                "scope_notes": project.get("scope_notes", ""),
+            })
+            # Carry over any fields the LLM didn't include
+            return {**project, **result}
+        except Exception as e:
+            print(f"[WARN] LLM expansion failed, falling back to mock: {e}")
+
+    return _mock_expand(project, stack)
+
+
+# ---------- Mock fallback ----------
 FILE_STRUCTURES = {
     "React": """project/
 ├── client/
-│   ├── public/
-│   │   └── index.html
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Header.jsx
-│   │   │   ├── Footer.jsx
-│   │   │   └── Dashboard.jsx
-│   │   ├── pages/
-│   │   │   ├── Home.jsx
-│   │   │   ├── Login.jsx
-│   │   │   └── Profile.jsx
-│   │   ├── context/
-│   │   │   └── AppContext.jsx
-│   │   ├── hooks/
-│   │   │   └── useAuth.js
-│   │   ├── api/
-│   │   │   └── index.js
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   └── package.json
+│   ├── public/index.html
+│   └── src/
+│       ├── components/
+│       ├── pages/
+│       ├── context/
+│       ├── hooks/
+│       ├── api/index.js
+│       ├── App.jsx
+│       └── main.jsx
 ├── server/
 │   ├── routes/
 │   ├── models/
 │   ├── middleware/
 │   └── index.js
 ├── .env
-├── .gitignore
 └── README.md""",
-
     "Python": """project/
 ├── app/
-│   ├── __init__.py
 │   ├── main.py
 │   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py
 │   ├── routes/
-│   │   ├── __init__.py
-│   │   └── api.py
 │   ├── services/
-│   │   ├── __init__.py
-│   │   └── core.py
 │   └── utils/
-│       └── helpers.py
 ├── tests/
 │   ├── test_models.py
 │   └── test_routes.py
 ├── requirements.txt
 ├── .env
-├── .gitignore
 └── README.md""",
-
     "default": """project/
 ├── src/
 │   ├── components/
-│   ├── pages/
 │   ├── services/
-│   ├── utils/
-│   └── index.js
+│   └── utils/
 ├── tests/
-├── config/
-├── docs/
 ├── .env
-├── .gitignore
 ├── package.json
-└── README.md"""
+└── README.md""",
 }
 
 LEARNING_OUTCOMES = [
@@ -88,12 +161,7 @@ LEARNING_OUTCOMES = [
     "Implementing real-time features with WebSockets",
     "Understanding microservices architecture principles",
     "Deploying applications to cloud platforms",
-    "Implementing CI/CD pipelines",
     "Database schema design and optimization",
-    "Error handling and logging best practices",
-    "Understanding event-driven architecture",
-    "Working with Docker and containerization",
-    "API versioning and documentation"
 ]
 
 RESOURCES = [
@@ -105,42 +173,33 @@ RESOURCES = [
     "Tailwind CSS Docs — https://tailwindcss.com/docs",
     "JavaScript.info — https://javascript.info",
     "Python Official Tutorial — https://docs.python.org/3/tutorial",
-    "freeCodeCamp — https://www.freecodecamp.org",
-    "The Odin Project — https://www.theodinproject.com",
     "Docker Getting Started — https://docs.docker.com/get-started",
-    "JWT.io — https://jwt.io/introduction"
+    "JWT.io — https://jwt.io/introduction",
 ]
 
 
-def expand_project(project: dict, stack: str = "") -> dict:
-    """Expand a project idea into a full brief with milestones, structure, and resources."""
-
-    # Determine file structure template
+def _mock_expand(project: dict, stack: str = "") -> dict:
     stack_lower = stack.lower() if stack else ""
-    if "react" in stack_lower or "vue" in stack_lower or "next" in stack_lower:
+    if any(w in stack_lower for w in ["react", "vue", "next"]):
         file_structure = FILE_STRUCTURES["React"]
-    elif "python" in stack_lower or "django" in stack_lower or "flask" in stack_lower or "fastapi" in stack_lower:
+    elif any(w in stack_lower for w in ["python", "django", "flask", "fastapi"]):
         file_structure = FILE_STRUCTURES["Python"]
     else:
         file_structure = FILE_STRUCTURES["default"]
 
-    # Generate milestones based on features
     features = project.get("core_features", [])
     milestones = [
         f"Week 1: Project setup, environment configuration, and implement {features[0] if features else 'core architecture'}",
         f"Week 2: Build {features[1] if len(features) > 1 else 'main features'} and {features[2] if len(features) > 2 else 'data layer'}",
         f"Week 3: Implement {features[3] if len(features) > 3 else 'remaining features'} and integrate all components",
-        f"Week 4: Testing, bug fixes, UI polish, and deployment preparation"
+        "Week 4: Testing, bug fixes, UI polish, and deployment preparation",
     ]
-
-    # Select learning outcomes and resources
-    outcomes = random.sample(LEARNING_OUTCOMES, min(4, len(LEARNING_OUTCOMES)))
-    resources = random.sample(RESOURCES, min(4, len(RESOURCES)))
 
     return {
         **project,
         "file_structure": file_structure,
         "milestones": milestones,
-        "learning_outcomes": outcomes,
-        "resources": resources
+        "learning_outcomes": random.sample(LEARNING_OUTCOMES, 4),
+        "resources": random.sample(RESOURCES, 4),
+        "scope_notes": project.get("scope_notes", ""),
     }
