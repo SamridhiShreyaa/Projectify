@@ -82,18 +82,21 @@ jobs:
   build:
     name: Docker Build Check
     runs-on: ubuntu-latest
-    # Only runs if both test jobs pass
     needs: [test-ai-service, test-server]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create .env for build check
+      - name: Create env files for build check
         run: |
-          echo "OPENROUTER_API_KEY=placeholder" > .env
-          echo "JWT_SECRET=placeholder" >> .env
-          echo "MONGO_URI=placeholder" >> .env
-          echo "AI_SERVICE_URL=http://ai_service:8001" >> .env
+          echo "OPENROUTER_API_KEY=placeholder" > ai_service/.env
+          echo "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1" >> ai_service/.env
+          echo "ALLOWED_ORIGINS=*" >> ai_service/.env
+
+          echo "PORT=5000" > server/.env
+          echo "JWT_SECRET=placeholder-secret" >> server/.env
+          echo "MONGO_URI=mongodb://localhost:27017/projectify" >> server/.env
+          echo "AI_SERVICE_URL=http://ai_service:8001" >> server/.env
 
       - name: Build all services
         run: docker compose build --no-cache
