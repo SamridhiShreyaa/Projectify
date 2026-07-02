@@ -14,9 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from models.schemas import GenerateRequest, ProjectOutput
-from chains.idea import generate_idea
-from chains.validate import validate_idea
-from chains.expand import expand_project
+from graph import run_pipeline
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -101,28 +99,14 @@ async def generate_project(request: GenerateRequest, http_request: Request):
     _validate_request(request)
 
     try:
-        # Chain 1: Generate raw idea
-        raw_idea = generate_idea(
+        # LangGraph pipeline: planner → requirements → architecture → generator → reviewer
+        final_state = run_pipeline(
             topic=request.topic.strip(),
             difficulty=request.difficulty,
             stack=request.stack.strip(),
-            hours=request.hours_per_week,
+            hours_per_week=request.hours_per_week,
         )
-
-        # Chain 2: Validate and adjust scope
-        validated = validate_idea(
-            project=raw_idea,
-            difficulty=request.difficulty,
-            hours=request.hours_per_week,
-        )
-
-        # Chain 3: Expand into full brief
-        expanded = expand_project(
-            project=validated,
-            stack=request.stack.strip(),
-        )
-
-        return expanded
+        return final_state["project"]
 
     except HTTPException:
         raise

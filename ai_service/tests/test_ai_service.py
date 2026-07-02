@@ -403,6 +403,32 @@ class TestExpandChain:
 
 
 # ─────────────────────────────────────────────
+# LangGraph pipeline
+# ─────────────────────────────────────────────
+
+class TestLangGraphPipeline:
+    def test_nodes_execute_in_order(self):
+        from graph import run_pipeline
+        state = run_pipeline("web development", "beginner", "React, Node.js", 10)
+        assert state["node_trace"] == [
+            "planner", "requirements", "architecture", "generator", "reviewer",
+        ]
+
+    def test_pipeline_produces_complete_project(self):
+        from graph import run_pipeline
+        state = run_pipeline("web development", "beginner", "React, Node.js", 10)
+        project = state["project"]
+        for key in ["title", "description", "core_features", "milestones",
+                    "file_structure", "learning_outcomes", "resources"]:
+            assert key in project, f"missing {key}"
+
+    def test_reviewer_reports_no_missing_fields_in_mock_mode(self):
+        from graph import run_pipeline
+        state = run_pipeline("web development", "beginner", "React, Node.js", 10)
+        assert state["review_notes"] == []
+
+
+# ─────────────────────────────────────────────
 # Mermaid diagram
 # ─────────────────────────────────────────────
 
