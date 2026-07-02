@@ -192,12 +192,20 @@ def review_repo(repo_url: str) -> dict:
                 "readme": repo_data["readme"][:6000],
             })
             if _is_valid_review(result):
-                return {"repo": repo_data["full_name"], "scores": _normalize(result)}
+                return {
+                    "repo": repo_data["full_name"],
+                    "mode": "llm",
+                    "scores": _normalize(result),
+                }
             print("[WARN] LLM review malformed, falling back to heuristics")
         except Exception as e:
             print(f"[WARN] LLM review failed, falling back to heuristics: {e}")
 
-    return {"repo": repo_data["full_name"], "scores": _heuristic_review(repo_data)}
+    return {
+        "repo": repo_data["full_name"],
+        "mode": "heuristic",
+        "scores": _heuristic_review(repo_data),
+    }
 
 
 def _is_valid_review(result: dict) -> bool:

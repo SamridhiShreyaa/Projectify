@@ -481,6 +481,7 @@ describe('POST /api/generate — rate limiting', () => {
 
 const MOCK_REVIEW_RESPONSE = {
     repo: 'someone/goodrepo',
+    mode: 'heuristic',
     scores: {
         architecture_clarity: { score: 7, rationale: 'Clear module layout.' },
         test_coverage_signal: { score: 6, rationale: 'Has a tests directory.' },
@@ -531,6 +532,7 @@ describe('POST /api/review', () => {
         const saved = await Review.findOne({});
         expect(saved.userId.toString()).toBe(user._id.toString());
         expect(saved.repo).toBe('someone/goodrepo');
+        expect(saved.mode).toBe('heuristic');
 
         await Review.deleteMany({});
     });

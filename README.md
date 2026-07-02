@@ -37,7 +37,7 @@ planner → requirements → architecture → generator → reviewer
 
 Each chain calls `openrouter/free` (OpenRouter's free-model auto-router). Everything falls back to mock mode if no API key is set — useful for local development without burning credits.
 
-A separate chain (`chains/review.py`) powers the GitHub repo reviewer: it fetches a repo's file tree and README via the GitHub REST API (cached, rate-limit-aware) and scores it on architecture clarity, test coverage signal, documentation quality, and hiring signal.
+A separate chain (`chains/review.py`) powers the GitHub repo reviewer: it fetches a repo's file tree and README via the GitHub REST API (cached, rate-limit-aware) and scores it on architecture clarity, test coverage signal, documentation quality, and hiring signal. Every response carries a `mode` field: `llm` means a model actually read the tree and README and judged each category; `heuristic` (used when no API key is set) means the scores come from rule-based counting — number of test files, presence of README sections, Docker/CI markers — **not** an AI judgment. The two are not comparable, and the UI labels which one you're looking at.
 
 ---
 
@@ -62,7 +62,7 @@ A separate chain (`chains/review.py`) powers the GitHub repo reviewer: it fetche
 - **AI-generated project briefs** — title, description, core features, stretch goals, milestones, file structure, learning outcomes, resources
 - **Starter code skeletons** — each brief includes minimal, stack-appropriate starter files (`skeleton_files`), downloadable as a zip from the results page
 - **Architecture diagrams** — every brief ships a Mermaid `graph TD` diagram of the proposed architecture, rendered inline
-- **GitHub repo reviewer** — paste any public repo URL and get 1–10 scores with rationales for architecture clarity, test coverage signal, documentation quality, and overall hiring signal
+- **GitHub repo reviewer** — paste any public repo URL and get 1–10 scores with rationales for architecture clarity, test coverage signal, documentation quality, and overall hiring signal; results are labeled `llm` (model-judged) or `heuristic` (rule-based file/README counting when no API key is set — not an AI judgment)
 - **LangGraph orchestration** — the generation pipeline is an explicit five-node state graph (planner → requirements → architecture → generator → reviewer)
 - **RAG grounding** — idea generation retrieves similar patterns from a curated 38-entry corpus in ChromaDB and injects them as prompt context
 - **Mock fallback** — works fully without an API key (and without a populated vector store) for local development and CI
@@ -252,6 +252,7 @@ Score a public GitHub repository as a portfolio piece.
 ```json
 {
   "repo": "owner/repo",
+  "mode": "llm",
   "scores": {
     "architecture_clarity": {"score": 7, "rationale": "..."},
     "test_coverage_signal": {"score": 6, "rationale": "..."},
@@ -260,6 +261,8 @@ Score a public GitHub repository as a portfolio piece.
   }
 }
 ```
+
+`mode` is `llm` when a model judged the repo, or `heuristic` when no API key is configured — heuristic scores are rule-based counting (test-file count, README sections, Docker/CI markers), not an AI assessment.
 
 **Errors:** `422` invalid URL · `404` repo missing or private · `503` GitHub API rate limit reached (unauthenticated GitHub calls are cached for 10 minutes to stay under the 60 req/hour limit).
 
@@ -385,7 +388,9 @@ python scripts/ingest.py
 
 **Why LangGraph?** The pipeline was originally three chained function calls inside the `/generate` handler. That worked, but the control flow was implicit — you had to read the handler to know what ran when, and there was no place to attach cross-cutting concerns. Moving it into an explicit `StateGraph` with named nodes (`planner → requirements → architecture → generator → reviewer`) makes the pipeline self-describing, records an execution trace in state (which the tests assert on), and gives future features an obvious seam: conditional edges (e.g. re-planning when the reviewer flags gaps), retries per node, or parallel branches — none of which fit naturally in straight-line code. The refactor deliberately changed no behavior: the same three chains run in the same order with the same arguments, and mock mode is untouched.
 
-**Why Chroma over a hosted vector DB?** The retrieval corpus is 38 documents. A hosted vector DB (Pinecone, Weaviate Cloud, etc.) would add an API key, a network dependency in every environment including CI, latency, and a bill — for a dataset that fits in memory a thousand times over. Chroma runs embedded in the service process, persists to a local directory, and needs zero infrastructure. Two deliberate twists: embeddings are deterministic feature-hashed bag-of-words vectors computed in-process (no model download — Chroma's default embedder pulls an ONNX model from the network, which would break offline CI), and retrieval is strictly best-effort — an empty or missing store falls back to ungrounded generation rather than erroring. If the corpus ever grows to millions of entries or needs cross-service sharing, swapping Chroma for a hosted store is a change confined to `retrieval.py`.
+**Why Chroma over a hosted vector DB?** The retrieval corpus is 38 documents. A hosted vector DB (Pinecone, Weaviate Cloud, etc.) would add an API key, a network dependency in every environment including CI, latency, and a bill — for a dataset that fits in memory a thousand times over. Chroma runs embedded in the service process, persists to a local directory, and needs zero infrastructure.
+
+**The embeddings are not a trained model — read this before judging retrieval quality.** The "embeddings" are deterministic feature-hashed bag-of-words vectors computed in-process (`retrieval.py:embed_text`): tokens are MD5-hashed into a 512-dim vector and L2-normalized. This is lexical keyword overlap, **not** semantic similarity — "car" and "automobile" are unrelated vectors here, where a real embedding model would place them together. It was chosen deliberately so CI and local dev run fully offline: no model downloads (Chroma's default embedder pulls an ONNX model from the network), no embedding API key, and bit-for-bit reproducible tests. For a 38-entry corpus queried by topic/stack keywords, lexical matching is adequate. Swapping in a real embedding later is straightforward and confined to `retrieval.py`: replace `embed_text` with a sentence-transformers model or an API-based embedding (e.g. OpenAI/Voyage), re-run `scripts/ingest.py` to re-embed the corpus, and keep the same Chroma calls — nothing upstream changes. Retrieval is also strictly best-effort: an empty or missing store falls back to ungrounded generation rather than erroring.
 
 **In-memory vs Redis rate limiter.** Both services rate-limit with in-process maps (IP-keyed in FastAPI, user-keyed in Express). The tradeoff is deliberate: an in-memory limiter is zero-dependency and exactly right for a single-instance deployment (which Render free tier is), but it resets on restart and doesn't share state across replicas — scale to two instances and each enforces its own window, doubling the effective limit. Redis-backed limiting (e.g. `express-rate-limit` + `rate-limit-redis`) fixes both at the cost of running Redis everywhere, including local dev and CI. Until there's more than one replica, that cost buys nothing; the code paths are small and isolated (`checkRateLimit` / `_check_rate_limit`), so the swap is mechanical when it's needed.
 

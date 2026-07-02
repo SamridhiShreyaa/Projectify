@@ -64,7 +64,19 @@ const ReviewRepo = () => {
 
                 {review && (
                     <div className="slide-up">
-                        <h2 style={{ marginBottom: '1rem' }}>📋 {review.repo}</h2>
+                        <h2 style={{ marginBottom: '0.5rem' }}>📋 {review.repo}</h2>
+                        <p style={{
+                            marginBottom: '1rem',
+                            fontSize: '0.85rem',
+                            opacity: 0.85,
+                            border: '1px dashed currentColor',
+                            padding: '0.4rem 0.6rem',
+                            display: 'inline-block'
+                        }}>
+                            {review.mode === 'llm'
+                                ? '🤖 Scored by LLM — a model read the file tree and README and judged each category.'
+                                : '📏 Scored heuristically — rule-based counting of files and README sections, not an AI judgment.'}
+                        </p>
                         {Object.entries(CATEGORY_LABELS).map(([key, { icon, label }]) => {
                             const entry = review.scores?.[key];
                             if (!entry) return null;

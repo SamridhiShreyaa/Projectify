@@ -36,6 +36,7 @@ class CategoryScore(BaseModel):
 
 class ReviewOutput(BaseModel):
     repo: str
+    mode: str = Field(..., description="'llm' (model-judged) or 'heuristic' (rule-based counting)")
     scores: dict[str, CategoryScore]
 
 

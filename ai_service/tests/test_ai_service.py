@@ -530,6 +530,8 @@ class TestReviewRepo:
         assert res.status_code == 200
         data = res.json()
         assert data["repo"] == "someone/goodrepo"
+        # No API key in tests → scores must be labeled as rule-based
+        assert data["mode"] == "heuristic"
         for cat in ["architecture_clarity", "test_coverage_signal",
                     "documentation_quality", "hiring_signal"]:
             assert cat in data["scores"]
