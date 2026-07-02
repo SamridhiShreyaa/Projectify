@@ -31,6 +31,10 @@ class ExpandedProject(BaseModel):
         default_factory=list,
         description="3-6 minimal starter files consistent with the tech stack",
     )
+    mermaid_diagram: str = Field(
+        default="",
+        description="Mermaid graph TD diagram of the proposed architecture",
+    )
 
 
 # ---------- Prompt (built lazily) ----------
@@ -56,7 +60,8 @@ Schema:
   "resources": ["string", ...],       // exactly 4 items, format: "Name — https://url"
   "skeleton_files": [                 // 3-6 minimal starter files for this stack
     {{"path": "string", "content": "string"}}, ...
-  ]
+  ],
+  "mermaid_diagram": "string"         // Mermaid 'graph TD' architecture diagram
 }}"""),
             ("human", """Expand this project into a full brief:
 
@@ -75,6 +80,10 @@ Requirements:
 5. Skeleton files: 3-6 minimal starter files matching the file structure and stack
    (e.g. a basic route file, a component stub, a schema/model file). Keep each
    under ~40 lines — stubs with TODO comments, not full implementations.
+6. Mermaid diagram: a 'graph TD' diagram of this project's architecture —
+   the main components (UI, API, services, database, external APIs) and the
+   arrows between them. Use only plain node labels in square brackets;
+   no styling, no subgraphs, no special characters that break Mermaid parsing.
 
 Make everything specific to this project, not boilerplate.""")
         ])
@@ -116,9 +125,11 @@ def expand_project(project: dict, stack: str = "") -> dict:
             })
             # Carry over any fields the LLM didn't include
             merged = {**project, **result}
-            # Guarantee skeleton_files is present even if the LLM omitted it
+            # Guarantee generated extras are present even if the LLM omitted them
             if not merged.get("skeleton_files"):
                 merged["skeleton_files"] = _mock_skeleton_files(merged, stack)
+            if not _is_valid_mermaid(merged.get("mermaid_diagram", "")):
+                merged["mermaid_diagram"] = _mock_mermaid_diagram(merged, stack)
             return merged
         except Exception as e:
             print(f"[WARN] LLM expansion failed, falling back to mock: {e}")
@@ -351,6 +362,32 @@ SKELETON_FILES = {
 }
 
 
+MERMAID_DIAGRAMS = {
+    "React": """graph TD
+    U[User Browser] --> C[React Client]
+    C --> S[Express API Server]
+    S --> M[(MongoDB)]
+    S --> X[External Services]""",
+    "Python": """graph TD
+    U[Client] --> A[FastAPI App]
+    A --> R[API Routers]
+    R --> V[Service Layer]
+    V --> D[(Database)]""",
+    "default": """graph TD
+    U[User] --> F[Frontend]
+    F --> B[Backend API]
+    B --> D[(Database)]""",
+}
+
+
+def _is_valid_mermaid(diagram: str) -> bool:
+    return isinstance(diagram, str) and diagram.strip().startswith(("graph", "flowchart"))
+
+
+def _mock_mermaid_diagram(project: dict, stack: str = "") -> str:
+    return MERMAID_DIAGRAMS[_stack_key(stack)]
+
+
 def _stack_key(stack: str) -> str:
     stack_lower = stack.lower() if stack else ""
     if any(w in stack_lower for w in ["react", "vue", "next"]):
@@ -383,4 +420,5 @@ def _mock_expand(project: dict, stack: str = "") -> dict:
         "resources": random.sample(RESOURCES, 4),
         "scope_notes": project.get("scope_notes", ""),
         "skeleton_files": _mock_skeleton_files(project, stack),
+        "mermaid_diagram": _mock_mermaid_diagram(project, stack),
     }

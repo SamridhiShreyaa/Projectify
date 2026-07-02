@@ -403,6 +403,39 @@ class TestExpandChain:
 
 
 # ─────────────────────────────────────────────
+# Mermaid diagram
+# ─────────────────────────────────────────────
+
+class TestMermaidDiagram:
+    def setup_method(self):
+        self.base_project = {
+            "title": "Task Manager",
+            "description": "A simple task management app.",
+            "core_features": ["Auth", "CRUD", "Search"],
+            "stretch_goals": ["Dark mode"],
+        }
+
+    def test_expand_returns_mermaid_diagram(self):
+        from chains.expand import expand_project
+        result = expand_project(self.base_project.copy(), "React")
+        assert "mermaid_diagram" in result
+        assert len(result["mermaid_diagram"]) > 0
+
+    def test_mermaid_diagram_starts_with_valid_syntax(self):
+        from chains.expand import expand_project
+        result = expand_project(self.base_project.copy(), "React")
+        assert result["mermaid_diagram"].strip().startswith(("graph", "flowchart"))
+
+    def test_generate_returns_mermaid_diagram(self):
+        """Integration: /generate returns a valid Mermaid diagram."""
+        clear_rate_store()
+        res = client.post("/generate", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+        diagram = res.json()["mermaid_diagram"]
+        assert diagram.strip().startswith(("graph", "flowchart"))
+
+
+# ─────────────────────────────────────────────
 # Schema — skeleton_files
 # ─────────────────────────────────────────────
 

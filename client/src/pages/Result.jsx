@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import JSZip from 'jszip';
 import Milestone from '../components/Milestone';
+import MermaidDiagram from '../components/MermaidDiagram';
 
 const Result = () => {
     const location = useLocation();
@@ -113,6 +114,13 @@ const Result = () => {
                     <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.2s' }}>
                         <h3><span className="icon">📅</span> Quest Stages</h3>
                         {project.milestones.map((m, i) => <Milestone key={i} milestone={m} index={i} />)}
+                    </div>
+                )}
+
+                {project.mermaid_diagram && (
+                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.22s' }}>
+                        <h3><span className="icon">🗺️</span> Architecture Map</h3>
+                        <MermaidDiagram chart={project.mermaid_diagram} />
                     </div>
                 )}
 

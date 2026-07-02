@@ -41,5 +41,6 @@ class ProjectOutput(BaseModel):
     learning_outcomes: List[str]
     resources: List[str]
     skeleton_files: List[SkeletonFile] = Field(default_factory=list)
+    mermaid_diagram: str = ""
 
     model_config = ConfigDict(extra="allow")

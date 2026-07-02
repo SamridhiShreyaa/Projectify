@@ -14,6 +14,7 @@ const projectSchema = new mongoose.Schema({
         type: [{ path: String, content: String, _id: false }],
         default: []
     },
+    mermaid_diagram: String,
     input: {
         topic: String,
         difficulty: String,
