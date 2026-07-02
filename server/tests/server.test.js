@@ -115,6 +115,30 @@ describe('CORS allowlist', () => {
 
 
 // ═════════════════════════════════════════════
+// Security headers (helmet)
+// ═════════════════════════════════════════════
+
+describe('helmet security headers', () => {
+    it('sets standard security headers on responses', async () => {
+        const res = await request(app).get('/health');
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+        expect(res.headers['x-frame-options']).toBeDefined();
+        expect(res.headers['content-security-policy']).toBeDefined();
+        expect(res.headers['x-powered-by']).toBeUndefined();
+    });
+
+    it('does not interfere with CORS headers for allowed origins', async () => {
+        const res = await request(app)
+            .get('/health')
+            .set('Origin', 'http://localhost:3000');
+        expect(res.status).toBe(200);
+        expect(res.headers['access-control-allow-origin']).toBe('http://localhost:3000');
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+    });
+});
+
+
+// ═════════════════════════════════════════════
 // Auth — Signup
 // ═════════════════════════════════════════════
 

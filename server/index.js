@@ -1,9 +1,11 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
 
 const app = express();
+app.use(helmet());
 
 // CORS allowlist — comma-separated origins, same pattern as the AI service's
 // ALLOWED_ORIGINS env var. Defaults to the local Vite dev client.
