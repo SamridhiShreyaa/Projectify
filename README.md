@@ -6,6 +6,10 @@ Built as a microservices architecture with a LangGraph-orchestrated LLM pipeline
 
 **Live:** [projectify-ai.onrender.com](https://projectify-ai.onrender.com/health)
 
+> **🔍 Self-reviewed via Projectify's own `/review-repo` endpoint** (as of 2026-07-02, post-cleanup):
+> **LLM mode** — architecture clarity **8/10**, test coverage signal **7/10**, documentation quality **9/10**, hiring signal **8/10**.
+> Heuristic mode (rule-based counting, not an AI judgment) scored the same repo 10 / 5 / 10 / 8 — a good illustration of why results are mode-labeled.
+
 ---
 
 ## Architecture
