@@ -312,3 +312,9 @@ Deployed on Render via `render.yaml`. Both services auto-deploy on push to `main
 | `MONGO_URI` | server | MongoDB connection string |
 | `JWT_SECRET` | server | Secret for signing JWTs |
 | `AI_SERVICE_URL` | server | URL of the AI service |
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
