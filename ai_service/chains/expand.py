@@ -75,7 +75,7 @@ def _get_llm():
 
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
-        model="meta-llama/llama-3.3-70b-instruct:free",
+        model="openrouter/free",
         api_key=api_key,
         base_url=base_url,
         temperature=0.6,
