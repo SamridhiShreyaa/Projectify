@@ -88,6 +88,33 @@ const MOCK_AI_RESPONSE = {
 
 
 // ═════════════════════════════════════════════
+// CORS
+// ═════════════════════════════════════════════
+
+describe('CORS allowlist', () => {
+    it('sets Access-Control-Allow-Origin for the default allowed origin', async () => {
+        const res = await request(app)
+            .get('/health')
+            .set('Origin', 'http://localhost:3000');
+        expect(res.headers['access-control-allow-origin']).toBe('http://localhost:3000');
+    });
+
+    it('does not set Access-Control-Allow-Origin for a disallowed origin', async () => {
+        const res = await request(app)
+            .get('/health')
+            .set('Origin', 'https://evil.example.com');
+        expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    it('still serves requests without an Origin header', async () => {
+        const res = await request(app).get('/health');
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe('ok');
+    });
+});
+
+
+// ═════════════════════════════════════════════
 // Auth — Signup
 // ═════════════════════════════════════════════
 

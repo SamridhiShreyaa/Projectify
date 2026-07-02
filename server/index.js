@@ -4,7 +4,18 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+
+// CORS allowlist — comma-separated origins, same pattern as the AI service's
+// ALLOWED_ORIGINS env var. Defaults to the local Vite dev client.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
+app.use(cors({
+    origin: ALLOWED_ORIGINS,
+    credentials: true,
+}));
 app.use(express.json());
 
 // Routes
