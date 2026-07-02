@@ -42,6 +42,8 @@ No markdown, no explanation, just JSON."""),
 - Tech stack: {stack}
 - Available time: {hours} hours/week
 
+{grounding}
+
 The project must be completable within 4-6 weeks at this pace.
 Core features must be achievable at {difficulty} level.
 Keep the description practical and specific, not generic.""")
@@ -72,6 +74,11 @@ def generate_idea(topic: str, difficulty: str, stack: str, hours: int) -> dict:
 
     if llm:
         try:
+            # RAG grounding — best-effort: returns [] if the vector store
+            # is empty or unavailable, and generation proceeds ungrounded.
+            from retrieval import retrieve_patterns, format_grounding
+            grounding = format_grounding(retrieve_patterns(topic, stack, difficulty))
+
             from langchain_core.output_parsers import JsonOutputParser
             parser = JsonOutputParser(pydantic_object=ProjectIdea)
             chain = _get_prompt() | llm | parser
@@ -80,6 +87,7 @@ def generate_idea(topic: str, difficulty: str, stack: str, hours: int) -> dict:
                 "difficulty": difficulty,
                 "stack": stack,
                 "hours": hours,
+                "grounding": grounding,
             })
             return result
         except Exception as e:

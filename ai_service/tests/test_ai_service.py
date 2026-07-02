@@ -403,6 +403,54 @@ class TestExpandChain:
 
 
 # ─────────────────────────────────────────────
+# RAG retrieval (Chroma)
+# ─────────────────────────────────────────────
+
+class TestRetrieval:
+    def test_ingest_and_retrieve_known_topic(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "chroma"))
+        from retrieval import ingest_patterns, retrieve_patterns
+
+        count = ingest_patterns(persist_dir=str(tmp_path / "chroma"))
+        assert count >= 30
+
+        results = retrieve_patterns("real-time chat application", "React, Node.js", "intermediate")
+        assert len(results) > 0
+        top = results[0]
+        assert top["title"]
+        assert top["domain"]
+        # A chat query against the seed corpus should surface the chat pattern
+        titles = " ".join(r["title"].lower() for r in results)
+        assert "chat" in titles or "real-time" in titles
+
+    def test_retrieval_returns_empty_for_missing_store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "empty-chroma"))
+        from retrieval import retrieve_patterns
+        assert retrieve_patterns("web development", "React", "beginner") == []
+
+    def test_generate_succeeds_with_empty_store(self, tmp_path, monkeypatch):
+        """Fallback path: no vector store → ungrounded generation, no error."""
+        monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "empty-chroma"))
+        clear_rate_store()
+        res = client.post("/generate", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+        assert res.json()["title"]
+
+    def test_embedding_is_deterministic(self):
+        from retrieval import embed_text
+        assert embed_text("react chat app") == embed_text("react chat app")
+
+    def test_format_grounding_empty_and_populated(self):
+        from retrieval import format_grounding
+        assert format_grounding([]) == ""
+        text = format_grounding([{
+            "title": "Chat App", "domain": "web", "difficulty": "intermediate",
+            "stack": "React", "description": "A chat app.",
+        }])
+        assert "Chat App" in text and "grounding" in text.lower()
+
+
+# ─────────────────────────────────────────────
 # /review-repo — GitHub repo reviewer
 # ─────────────────────────────────────────────
 
