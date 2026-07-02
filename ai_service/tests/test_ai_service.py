@@ -381,3 +381,61 @@ class TestExpandChain:
         result = expand_project(self.base_project.copy(), "React")
         assert result["title"] == "Task Manager"
         assert result["description"] == "A simple task management app."
+
+    def test_has_skeleton_files(self):
+        from chains.expand import expand_project
+        result = expand_project(self.base_project.copy(), "React")
+        assert "skeleton_files" in result
+        assert len(result["skeleton_files"]) > 0
+
+    def test_skeleton_files_have_path_and_content(self):
+        from chains.expand import expand_project
+        result = expand_project(self.base_project.copy(), "React")
+        for f in result["skeleton_files"]:
+            assert isinstance(f["path"], str) and len(f["path"]) > 0
+            assert isinstance(f["content"], str) and len(f["content"]) > 0
+
+    def test_python_stack_gets_python_skeleton(self):
+        from chains.expand import expand_project
+        result = expand_project(self.base_project.copy(), "FastAPI, Python")
+        paths = [f["path"] for f in result["skeleton_files"]]
+        assert any(p.endswith(".py") for p in paths)
+
+
+# ─────────────────────────────────────────────
+# Schema — skeleton_files
+# ─────────────────────────────────────────────
+
+class TestSkeletonFilesSchema:
+    def test_project_output_accepts_skeleton_files(self):
+        from models.schemas import ProjectOutput
+        out = ProjectOutput(
+            title="T", description="D",
+            core_features=["a"], stretch_goals=[],
+            milestones=["1", "2", "3", "4"],
+            file_structure="src/",
+            learning_outcomes=["x"], resources=["y"],
+            skeleton_files=[{"path": "src/index.js", "content": "// hi"}],
+        )
+        assert out.skeleton_files[0].path == "src/index.js"
+
+    def test_skeleton_files_defaults_to_empty_list(self):
+        from models.schemas import ProjectOutput
+        out = ProjectOutput(
+            title="T", description="D",
+            core_features=["a"], stretch_goals=[],
+            milestones=["1", "2", "3", "4"],
+            file_structure="src/",
+            learning_outcomes=["x"], resources=["y"],
+        )
+        assert out.skeleton_files == []
+
+    def test_generate_returns_nonempty_skeleton_files(self):
+        """Integration: /generate returns skeleton_files for a valid request."""
+        clear_rate_store()
+        res = client.post("/generate", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+        data = res.json()
+        assert "skeleton_files" in data
+        assert len(data["skeleton_files"]) > 0
+        assert all("path" in f and "content" in f for f in data["skeleton_files"])

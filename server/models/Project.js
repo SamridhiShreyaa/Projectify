@@ -10,6 +10,10 @@ const projectSchema = new mongoose.Schema({
     milestones: [String],
     learning_outcomes: [String],
     resources: [String],
+    skeleton_files: {
+        type: [{ path: String, content: String, _id: false }],
+        default: []
+    },
     input: {
         topic: String,
         difficulty: String,

@@ -1,10 +1,27 @@
 import { useLocation, useNavigate } from 'react-router-dom';
+import JSZip from 'jszip';
 import Milestone from '../components/Milestone';
 
 const Result = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const project = location.state?.project;
+
+    const downloadStarterFiles = async () => {
+        const zip = new JSZip();
+        project.skeleton_files.forEach(({ path, content }) => {
+            zip.file(path, content);
+        });
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const slug = (project.title || 'project')
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        a.download = `${slug}-starter.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     if (!project) {
         return (
@@ -125,6 +142,11 @@ const Result = () => {
                 )}
 
                 <div className="result-actions slide-up" style={{ animationDelay: '0.4s' }}>
+                    {project.skeleton_files?.length > 0 && (
+                        <button className="btn btn-primary" onClick={downloadStarterFiles}>
+                            📦 Download Starter Files
+                        </button>
+                    )}
                     <button className="btn btn-primary" onClick={() => navigate('/')}>
                         ⚔ New Quest
                     </button>

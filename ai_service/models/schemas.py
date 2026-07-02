@@ -25,6 +25,11 @@ class GenerateRequest(BaseModel):
         return v.strip()
 
 
+class SkeletonFile(BaseModel):
+    path: str = Field(..., description="Relative file path, e.g. src/App.jsx")
+    content: str = Field(..., description="Minimal starter content for the file")
+
+
 class ProjectOutput(BaseModel):
     title: str
     description: str
@@ -35,5 +40,6 @@ class ProjectOutput(BaseModel):
     file_structure: str
     learning_outcomes: List[str]
     resources: List[str]
+    skeleton_files: List[SkeletonFile] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="allow")

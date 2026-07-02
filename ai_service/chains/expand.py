@@ -12,6 +12,11 @@ from typing import List
 
 
 # ---------- Output schema ----------
+class SkeletonFile(BaseModel):
+    path: str = Field(description="Relative file path, e.g. src/App.jsx")
+    content: str = Field(description="Minimal starter content for the file")
+
+
 class ExpandedProject(BaseModel):
     title: str
     description: str
@@ -22,6 +27,10 @@ class ExpandedProject(BaseModel):
     file_structure: str = Field(description="Suggested folder/file structure as plain text")
     learning_outcomes: List[str] = Field(description="4 things the developer will learn")
     resources: List[str] = Field(description="4 specific, relevant learning resources with URLs")
+    skeleton_files: List[SkeletonFile] = Field(
+        default_factory=list,
+        description="3-6 minimal starter files consistent with the tech stack",
+    )
 
 
 # ---------- Prompt (built lazily) ----------
@@ -44,7 +53,10 @@ Schema:
   "milestones": ["string", ...],      // exactly 4 weekly milestones
   "file_structure": "string",         // plain text folder tree
   "learning_outcomes": ["string", ...], // exactly 4 items
-  "resources": ["string", ...]        // exactly 4 items, format: "Name — https://url"
+  "resources": ["string", ...],       // exactly 4 items, format: "Name — https://url"
+  "skeleton_files": [                 // 3-6 minimal starter files for this stack
+    {{"path": "string", "content": "string"}}, ...
+  ]
 }}"""),
             ("human", """Expand this project into a full brief:
 
@@ -60,6 +72,9 @@ Requirements:
 3. Learning outcomes: 4 concrete skills the developer gains from this exact project.
 4. Resources: 4 real, specific URLs relevant to this stack and project type.
    Prefer official docs, not tutorials. Format: "Name — https://url"
+5. Skeleton files: 3-6 minimal starter files matching the file structure and stack
+   (e.g. a basic route file, a component stub, a schema/model file). Keep each
+   under ~40 lines — stubs with TODO comments, not full implementations.
 
 Make everything specific to this project, not boilerplate.""")
         ])
@@ -100,7 +115,11 @@ def expand_project(project: dict, stack: str = "") -> dict:
                 "scope_notes": project.get("scope_notes", ""),
             })
             # Carry over any fields the LLM didn't include
-            return {**project, **result}
+            merged = {**project, **result}
+            # Guarantee skeleton_files is present even if the LLM omitted it
+            if not merged.get("skeleton_files"):
+                merged["skeleton_files"] = _mock_skeleton_files(merged, stack)
+            return merged
         except Exception as e:
             print(f"[WARN] LLM expansion failed, falling back to mock: {e}")
 
@@ -178,14 +197,175 @@ RESOURCES = [
 ]
 
 
-def _mock_expand(project: dict, stack: str = "") -> dict:
+SKELETON_FILES = {
+    "React": [
+        {
+            "path": "client/src/App.jsx",
+            "content": (
+                "import { BrowserRouter, Routes, Route } from 'react-router-dom';\n\n"
+                "function App() {\n"
+                "    return (\n"
+                "        <BrowserRouter>\n"
+                "            <Routes>\n"
+                "                {/* TODO: add your pages here */}\n"
+                "            </Routes>\n"
+                "        </BrowserRouter>\n"
+                "    );\n"
+                "}\n\n"
+                "export default App;\n"
+            ),
+        },
+        {
+            "path": "client/src/api/index.js",
+            "content": (
+                "// Central API client — point this at your server\n"
+                "const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';\n\n"
+                "export async function apiGet(path) {\n"
+                "    const res = await fetch(`${BASE_URL}${path}`);\n"
+                "    if (!res.ok) throw new Error(`Request failed: ${res.status}`);\n"
+                "    return res.json();\n"
+                "}\n"
+            ),
+        },
+        {
+            "path": "server/index.js",
+            "content": (
+                "const express = require('express');\n\n"
+                "const app = express();\n"
+                "app.use(express.json());\n\n"
+                "// TODO: mount your routes, e.g. app.use('/api/items', require('./routes/items'));\n\n"
+                "app.get('/health', (req, res) => res.json({ status: 'ok' }));\n\n"
+                "const PORT = process.env.PORT || 5000;\n"
+                "app.listen(PORT, () => console.log(`Server running on ${PORT}`));\n"
+            ),
+        },
+        {
+            "path": "server/routes/items.js",
+            "content": (
+                "const router = require('express').Router();\n\n"
+                "// TODO: replace 'items' with your main resource\n"
+                "router.get('/', (req, res) => {\n"
+                "    res.json([]);\n"
+                "});\n\n"
+                "router.post('/', (req, res) => {\n"
+                "    // TODO: validate and persist req.body\n"
+                "    res.status(201).json(req.body);\n"
+                "});\n\n"
+                "module.exports = router;\n"
+            ),
+        },
+        {
+            "path": "server/models/Item.js",
+            "content": (
+                "// TODO: replace with your real schema (example uses Mongoose)\n"
+                "const mongoose = require('mongoose');\n\n"
+                "const itemSchema = new mongoose.Schema({\n"
+                "    name: { type: String, required: true },\n"
+                "    createdAt: { type: Date, default: Date.now },\n"
+                "});\n\n"
+                "module.exports = mongoose.model('Item', itemSchema);\n"
+            ),
+        },
+    ],
+    "Python": [
+        {
+            "path": "app/main.py",
+            "content": (
+                "from fastapi import FastAPI\n\n"
+                "from app.routes import items\n\n"
+                "app = FastAPI(title=\"My Project\")\n"
+                "app.include_router(items.router, prefix=\"/items\")\n\n\n"
+                "@app.get(\"/health\")\n"
+                "def health():\n"
+                "    return {\"status\": \"ok\"}\n"
+            ),
+        },
+        {
+            "path": "app/routes/items.py",
+            "content": (
+                "from fastapi import APIRouter\n\n"
+                "from app.models.schemas import Item\n\n"
+                "router = APIRouter()\n\n\n"
+                "@router.get(\"/\")\n"
+                "def list_items():\n"
+                "    # TODO: fetch from your data layer\n"
+                "    return []\n\n\n"
+                "@router.post(\"/\")\n"
+                "def create_item(item: Item):\n"
+                "    # TODO: validate and persist\n"
+                "    return item\n"
+            ),
+        },
+        {
+            "path": "app/models/schemas.py",
+            "content": (
+                "from pydantic import BaseModel\n\n\n"
+                "class Item(BaseModel):\n"
+                "    # TODO: replace with your real fields\n"
+                "    name: str\n"
+            ),
+        },
+        {
+            "path": "tests/test_routes.py",
+            "content": (
+                "from fastapi.testclient import TestClient\n\n"
+                "from app.main import app\n\n"
+                "client = TestClient(app)\n\n\n"
+                "def test_health():\n"
+                "    res = client.get(\"/health\")\n"
+                "    assert res.status_code == 200\n"
+            ),
+        },
+    ],
+    "default": [
+        {
+            "path": "src/index.js",
+            "content": (
+                "// Entry point\n"
+                "// TODO: wire up your application here\n"
+                "function main() {\n"
+                "    console.log('Hello, project!');\n"
+                "}\n\n"
+                "main();\n"
+            ),
+        },
+        {
+            "path": "src/services/example.js",
+            "content": (
+                "// TODO: replace with your core service logic\n"
+                "export function exampleService() {\n"
+                "    return 'not implemented';\n"
+                "}\n"
+            ),
+        },
+        {
+            "path": "tests/example.test.js",
+            "content": (
+                "// TODO: replace with real tests for your services\n"
+                "test('placeholder', () => {\n"
+                "    expect(true).toBe(true);\n"
+                "});\n"
+            ),
+        },
+    ],
+}
+
+
+def _stack_key(stack: str) -> str:
     stack_lower = stack.lower() if stack else ""
     if any(w in stack_lower for w in ["react", "vue", "next"]):
-        file_structure = FILE_STRUCTURES["React"]
-    elif any(w in stack_lower for w in ["python", "django", "flask", "fastapi"]):
-        file_structure = FILE_STRUCTURES["Python"]
-    else:
-        file_structure = FILE_STRUCTURES["default"]
+        return "React"
+    if any(w in stack_lower for w in ["python", "django", "flask", "fastapi"]):
+        return "Python"
+    return "default"
+
+
+def _mock_skeleton_files(project: dict, stack: str = "") -> list:
+    return [dict(f) for f in SKELETON_FILES[_stack_key(stack)]]
+
+
+def _mock_expand(project: dict, stack: str = "") -> dict:
+    file_structure = FILE_STRUCTURES[_stack_key(stack)]
 
     features = project.get("core_features", [])
     milestones = [
@@ -202,4 +382,5 @@ def _mock_expand(project: dict, stack: str = "") -> dict:
         "learning_outcomes": random.sample(LEARNING_OUTCOMES, 4),
         "resources": random.sample(RESOURCES, 4),
         "scope_notes": project.get("scope_notes", ""),
+        "skeleton_files": _mock_skeleton_files(project, stack),
     }

@@ -84,6 +84,10 @@ const MOCK_AI_RESPONSE = {
     learning_outcomes: ['REST APIs', 'Auth', 'MongoDB', 'Testing'],
     resources: ['MDN — https://developer.mozilla.org'],
     scope_notes: 'Scope looks appropriate.',
+    skeleton_files: [
+        { path: 'src/index.js', content: '// entry point\n' },
+        { path: 'src/routes/items.js', content: '// routes stub\n' },
+    ],
 };
 
 
@@ -358,6 +362,23 @@ describe('POST /api/generate — success', () => {
 
         const count = await Project.countDocuments({});
         expect(count).toBe(1);
+    });
+
+    it('persists skeleton_files on the saved project', async () => {
+        const axios = require('axios');
+        axios.post = jest.fn().mockResolvedValueOnce({ data: MOCK_AI_RESPONSE });
+
+        const res = await request(app)
+            .post('/api/generate')
+            .set('Authorization', `Bearer ${token}`)
+            .send(VALID_GENERATE_PAYLOAD);
+
+        expect(res.body.skeleton_files).toHaveLength(2);
+
+        const project = await Project.findOne({});
+        expect(project.skeleton_files).toHaveLength(2);
+        expect(project.skeleton_files[0].path).toBe('src/index.js');
+        expect(project.skeleton_files[0].content).toBe('// entry point\n');
     });
 
     it('project is saved with correct userId', async () => {
