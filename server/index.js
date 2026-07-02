@@ -24,6 +24,7 @@ app.use(express.json());
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/generate', require('./routes/generate'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/review', require('./routes/review'));
 
 // Health checks
 app.get('/health', (req, res) => res.json({ status: 'ok' }));

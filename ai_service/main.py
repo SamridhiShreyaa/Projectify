@@ -13,8 +13,14 @@ from collections import defaultdict
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from models.schemas import GenerateRequest, ProjectOutput
+from models.schemas import GenerateRequest, ProjectOutput, ReviewRequest, ReviewOutput
 from graph import run_pipeline
+from chains.review import (
+    review_repo,
+    InvalidRepoURLError,
+    RepoNotFoundError,
+    GitHubRateLimitError,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -112,6 +118,25 @@ async def generate_project(request: GenerateRequest, http_request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+
+@app.post("/review-repo", response_model=ReviewOutput)
+async def review_repository(request: ReviewRequest, http_request: Request):
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    _check_rate_limit(client_ip)
+
+    try:
+        return review_repo(request.repo_url)
+    except InvalidRepoURLError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RepoNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GitHubRateLimitError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Review failed: {str(e)}")
 
 
 @app.get("/health")

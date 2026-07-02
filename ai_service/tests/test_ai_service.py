@@ -403,6 +403,148 @@ class TestExpandChain:
 
 
 # ─────────────────────────────────────────────
+# /review-repo — GitHub repo reviewer
+# ─────────────────────────────────────────────
+
+class FakeGitHubResponse:
+    def __init__(self, status_code=200, json_data=None, headers=None):
+        self.status_code = status_code
+        self._json = json_data or {}
+        self.headers = headers or {}
+
+    def json(self):
+        return self._json
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
+
+def _fake_github_ok(url, **kwargs):
+    import base64
+    if url.endswith("/repos/someone/goodrepo"):
+        return FakeGitHubResponse(200, {
+            "full_name": "someone/goodrepo",
+            "description": "A demo repo",
+            "language": "Python",
+            "default_branch": "main",
+        })
+    if "/git/trees/" in url:
+        return FakeGitHubResponse(200, {
+            "tree": [
+                {"path": "src/main.py", "type": "blob"},
+                {"path": "src/routes/api.py", "type": "blob"},
+                {"path": "tests/test_main.py", "type": "blob"},
+                {"path": "Dockerfile", "type": "blob"},
+                {"path": ".github/workflows/ci.yml", "type": "blob"},
+                {"path": "requirements.txt", "type": "blob"},
+            ],
+        })
+    if url.endswith("/readme"):
+        content = base64.b64encode(
+            b"# Good Repo\n\n## Setup\npip install\n\n## Usage\nrun it\n" * 40
+        ).decode()
+        return FakeGitHubResponse(200, {"content": content})
+    return FakeGitHubResponse(404)
+
+
+class TestReviewRepo:
+    def setup_method(self):
+        clear_rate_store()
+        from chains.review import _gh_cache
+        _gh_cache.clear()
+
+    # --- URL parsing ---
+
+    def test_parse_full_https_url(self):
+        from chains.review import _parse_repo_url
+        assert _parse_repo_url("https://github.com/owner/repo") == ("owner", "repo")
+
+    def test_parse_url_with_git_suffix_and_trailing_slash(self):
+        from chains.review import _parse_repo_url
+        assert _parse_repo_url("https://github.com/owner/repo.git/") == ("owner", "repo")
+
+    def test_parse_bare_owner_repo(self):
+        from chains.review import _parse_repo_url
+        assert _parse_repo_url("github.com/owner/repo") == ("owner", "repo")
+
+    def test_parse_invalid_url_raises(self):
+        from chains.review import _parse_repo_url, InvalidRepoURLError
+        import pytest
+        with pytest.raises(InvalidRepoURLError):
+            _parse_repo_url("https://gitlab.com/not/github/extra")
+
+    # --- Valid repo (mocked GitHub) ---
+
+    def test_valid_repo_returns_all_categories(self):
+        with patch("httpx.get", side_effect=_fake_github_ok):
+            res = client.post("/review-repo", json={"repo_url": "https://github.com/someone/goodrepo"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["repo"] == "someone/goodrepo"
+        for cat in ["architecture_clarity", "test_coverage_signal",
+                    "documentation_quality", "hiring_signal"]:
+            assert cat in data["scores"]
+            assert 1 <= data["scores"][cat]["score"] <= 10
+            assert len(data["scores"][cat]["rationale"]) > 0
+
+    def test_repo_with_tests_scores_higher_than_without(self):
+        from chains.review import _heuristic_review
+        with_tests = _heuristic_review({
+            "tree": ["src/a.py", "tests/test_a.py", "tests/test_b.py"],
+            "readme": "# Hi",
+        })
+        without_tests = _heuristic_review({"tree": ["src/a.py"], "readme": "# Hi"})
+        assert (with_tests["test_coverage_signal"]["score"]
+                > without_tests["test_coverage_signal"]["score"])
+
+    def test_github_responses_are_cached(self):
+        mock_get = patch("httpx.get", side_effect=_fake_github_ok).start()
+        try:
+            client.post("/review-repo", json={"repo_url": "github.com/someone/goodrepo"})
+            first_call_count = mock_get.call_count
+            clear_rate_store()
+            client.post("/review-repo", json={"repo_url": "github.com/someone/goodrepo"})
+            assert mock_get.call_count == first_call_count  # served from cache
+        finally:
+            patch.stopall()
+
+    # --- Invalid / private repo ---
+
+    def test_nonexistent_repo_returns_404(self):
+        with patch("httpx.get", return_value=FakeGitHubResponse(404)):
+            res = client.post("/review-repo", json={"repo_url": "github.com/nobody/ghost"})
+        assert res.status_code == 404
+
+    def test_invalid_url_returns_422(self):
+        res = client.post("/review-repo", json={"repo_url": "not a repo url at all"})
+        assert res.status_code == 422
+
+    def test_missing_repo_url_returns_422(self):
+        res = client.post("/review-repo", json={})
+        assert res.status_code == 422
+
+    # --- GitHub rate limiting ---
+
+    def test_github_rate_limit_returns_503(self):
+        rate_limited = FakeGitHubResponse(
+            403, {"message": "API rate limit exceeded"},
+            headers={"X-RateLimit-Remaining": "0"},
+        )
+        with patch("httpx.get", return_value=rate_limited):
+            res = client.post("/review-repo", json={"repo_url": "github.com/someone/goodrepo"})
+        assert res.status_code == 503
+        assert "rate limit" in res.json()["detail"].lower()
+
+    def test_own_rate_limiter_applies_to_review_endpoint(self):
+        with patch("httpx.get", side_effect=_fake_github_ok):
+            for _ in range(5):
+                client.post("/review-repo", json={"repo_url": "github.com/someone/goodrepo"})
+            res = client.post("/review-repo", json={"repo_url": "github.com/someone/goodrepo"})
+        assert res.status_code == 429
+
+
+# ─────────────────────────────────────────────
 # LangGraph pipeline
 # ─────────────────────────────────────────────
 

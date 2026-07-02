@@ -25,6 +25,20 @@ class GenerateRequest(BaseModel):
         return v.strip()
 
 
+class ReviewRequest(BaseModel):
+    repo_url: str = Field(..., min_length=3, max_length=300, description="GitHub repo URL")
+
+
+class CategoryScore(BaseModel):
+    score: int = Field(..., ge=1, le=10)
+    rationale: str
+
+
+class ReviewOutput(BaseModel):
+    repo: str
+    scores: dict[str, CategoryScore]
+
+
 class SkeletonFile(BaseModel):
     path: str = Field(..., description="Relative file path, e.g. src/App.jsx")
     content: str = Field(..., description="Minimal starter content for the file")

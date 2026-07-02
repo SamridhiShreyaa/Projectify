@@ -31,6 +31,9 @@ const Navbar = () => {
                         <Link to="/saved" className={`navbar-link ${isActive('/saved')}`}>
                             📜 Log
                         </Link>
+                        <Link to="/review" className={`navbar-link ${isActive('/review')}`}>
+                            🔍 Inspect
+                        </Link>
                         <span style={{
                             fontFamily: 'var(--pixel-font)',
                             fontSize: '0.45rem',

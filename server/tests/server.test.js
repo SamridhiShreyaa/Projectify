@@ -476,6 +476,83 @@ describe('POST /api/generate — rate limiting', () => {
 
 
 // ═════════════════════════════════════════════
+// Review — POST /api/review
+// ═════════════════════════════════════════════
+
+const MOCK_REVIEW_RESPONSE = {
+    repo: 'someone/goodrepo',
+    scores: {
+        architecture_clarity: { score: 7, rationale: 'Clear module layout.' },
+        test_coverage_signal: { score: 6, rationale: 'Has a tests directory.' },
+        documentation_quality: { score: 8, rationale: 'Thorough README.' },
+        hiring_signal: { score: 7, rationale: 'Solid portfolio piece.' },
+    },
+};
+
+describe('POST /api/review', () => {
+    it('returns 401 if no token provided', async () => {
+        const res = await request(app)
+            .post('/api/review')
+            .send({ repo_url: 'https://github.com/someone/goodrepo' });
+        expect(res.status).toBe(401);
+    });
+
+    it('returns 401 if token is invalid', async () => {
+        const res = await request(app)
+            .post('/api/review')
+            .set('Authorization', 'Bearer not-a-real-token')
+            .send({ repo_url: 'https://github.com/someone/goodrepo' });
+        expect(res.status).toBe(401);
+    });
+
+    it('returns 422 if repo_url is missing', async () => {
+        const { token } = await createUserAndToken();
+        const res = await request(app)
+            .post('/api/review')
+            .set('Authorization', `Bearer ${token}`)
+            .send({});
+        expect(res.status).toBe(422);
+    });
+
+    it('proxies to the AI service and persists the review per user', async () => {
+        const Review = require('../models/Review');
+        const { user, token } = await createUserAndToken();
+        const axios = require('axios');
+        axios.post = jest.fn().mockResolvedValueOnce({ data: MOCK_REVIEW_RESPONSE });
+
+        const res = await request(app)
+            .post('/api/review')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ repo_url: 'https://github.com/someone/goodrepo' });
+
+        expect(res.status).toBe(200);
+        expect(res.body.scores.hiring_signal.score).toBe(7);
+
+        const saved = await Review.findOne({});
+        expect(saved.userId.toString()).toBe(user._id.toString());
+        expect(saved.repo).toBe('someone/goodrepo');
+
+        await Review.deleteMany({});
+    });
+
+    it('maps AI-service 404 to 404 (repo not found)', async () => {
+        const { token } = await createUserAndToken();
+        const axios = require('axios');
+        const err = new Error('not found');
+        err.response = { status: 404, data: { detail: 'Repository not found' } };
+        axios.post = jest.fn().mockRejectedValueOnce(err);
+
+        const res = await request(app)
+            .post('/api/review')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ repo_url: 'https://github.com/nobody/ghost' });
+
+        expect(res.status).toBe(404);
+    });
+});
+
+
+// ═════════════════════════════════════════════
 // Projects — GET
 // ═════════════════════════════════════════════
 

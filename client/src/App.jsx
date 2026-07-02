@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Result from './pages/Result';
 import Saved from './pages/Saved';
+import ReviewRepo from './pages/ReviewRepo';
 
 function App() {
     return (
@@ -37,6 +38,14 @@ function App() {
                         element={
                             <ProtectedRoute>
                                 <Saved />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/review"
+                        element={
+                            <ProtectedRoute>
+                                <ReviewRepo />
                             </ProtectedRoute>
                         }
                     />
