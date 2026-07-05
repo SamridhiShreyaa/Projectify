@@ -19,6 +19,11 @@ services:
           type: web
           name: projectify-ai
           envVarKey: RENDER_EXTERNAL_URL
+      # Allows browser requests from the deployed static client. Static sites can't
+      # be targeted by fromService, so this is the client's default Render hostname
+      # (derived from its `name` below) — update if you attach a custom domain.
+      - key: ALLOWED_ORIGINS
+        value: https://projectify-client.onrender.com
 
   # Python FastAPI AI Service
   - type: web
@@ -30,3 +35,22 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.12
+
+  # React Frontend (static site)
+  - type: web
+    name: projectify-client
+    runtime: static
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: client/dist
+    envVars:
+      # Baked into the build; points the client at the deployed server's origin
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: projectify-api
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      # SPA fallback so direct navigation to client-side routes (e.g. /saved) works
+      - type: rewrite
+        source: /*
+        destination: /index.html

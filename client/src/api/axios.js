@@ -1,7 +1,12 @@
 import axios from 'axios';
 
+// VITE_API_URL is the server's origin (e.g. https://projectify-api.onrender.com),
+// set at build time for deployments where the client and server are on different
+// origins. Left unset, baseURL falls back to a relative '/api' path, which works
+// both for the Vite dev proxy (vite.config.js) and same-origin deployments.
+const apiOrigin = import.meta.env.VITE_API_URL || '';
 const instance = axios.create({
-    baseURL: '/api'
+    baseURL: `${apiOrigin}/api`
 });
 
 // Automatically attach JWT token to every request
