@@ -5,6 +5,7 @@ Uses LangChain + OpenRouter to expand a validated idea into a full project brief
 Falls back to template mock if OPENROUTER_API_KEY is not set.
 """
 import os
+import re
 import json
 import random
 from pydantic import BaseModel, Field
@@ -134,8 +135,11 @@ def expand_project(project: dict, stack: str = "") -> dict:
             ]
             if not merged["skeleton_files"]:
                 merged["skeleton_files"] = _mock_skeleton_files(merged, stack)
-            if not _is_valid_mermaid(merged.get("mermaid_diagram", "")):
-                merged["mermaid_diagram"] = _mock_mermaid_diagram(merged, stack)
+            sanitized = _sanitize_mermaid(merged.get("mermaid_diagram", ""))
+            merged["mermaid_diagram"] = (
+                sanitized if _is_valid_mermaid(sanitized)
+                else _mock_mermaid_diagram(merged, stack)
+            )
             if not merged.get("milestones"):
                 merged["milestones"] = _mock_milestones(merged)
             if not merged.get("file_structure"):
@@ -394,8 +398,60 @@ MERMAID_DIAGRAMS = {
 }
 
 
+# Characters that break Mermaid parsing when they appear unquoted inside a
+# node label. When present we wrap the label in double quotes.
+_MERMAID_BREAKERS = re.compile(r'[()"@#<>/\\|]')
+# Node-shape delimiters. Cylinders/databases ([( )]) are handled before plain
+# rectangles ([ ]) so the rectangle pass doesn't swallow their inner parens.
+_MERMAID_CYLINDER = re.compile(r'\[\(\s*(.*?)\s*\)\]')
+_MERMAID_RECT = re.compile(r'\[(?!\()([^\[\]]*?)\]')
+_MERMAID_RHOMBUS = re.compile(r'\{(?!\{)([^{}]*?)\}')
+
+
+def _clean_mermaid_label(text: str) -> str:
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        text = text[1:-1].strip()
+    return text.replace('"', "'").replace('\\', ' ')
+
+
+def _quote_mermaid(open_lit: str, close_lit: str):
+    def repl(m: 're.Match') -> str:
+        inner = m.group(1)
+        clean = _clean_mermaid_label(inner)
+        if not clean:
+            return f'{open_lit}{close_lit}'
+        if _MERMAID_BREAKERS.search(inner):
+            return f'{open_lit}"{clean}"{close_lit}'
+        return f'{open_lit}{clean}{close_lit}'
+    return repl
+
+
+def _sanitize_mermaid(diagram: str) -> str:
+    """Quote node labels that contain characters Mermaid can't parse unquoted.
+
+    LLMs frequently emit labels like ``[User (Browser)]`` or ``[React/Vite]``
+    whose parentheses/slashes/quotes break the client-side Mermaid parser
+    (showing its "Syntax error" bomb). Wrapping such labels in double quotes
+    keeps the diagram renderable while leaving clean diagrams untouched.
+    """
+    if not isinstance(diagram, str) or not diagram.strip():
+        return diagram
+    text = diagram.replace('\r\n', '\n')
+    text = _MERMAID_CYLINDER.sub(_quote_mermaid('[(', ')]'), text)
+    text = _MERMAID_RECT.sub(_quote_mermaid('[', ']'), text)
+    text = _MERMAID_RHOMBUS.sub(_quote_mermaid('{', '}'), text)
+    return text
+
+
 def _is_valid_mermaid(diagram: str) -> bool:
-    return isinstance(diagram, str) and diagram.strip().startswith(("graph", "flowchart"))
+    if not isinstance(diagram, str):
+        return False
+    s = diagram.strip()
+    if not s.startswith(("graph", "flowchart")):
+        return False
+    # Require at least one node/edge line beyond the graph declaration.
+    return any(ln.strip() for ln in s.splitlines()[1:])
 
 
 def _mock_mermaid_diagram(project: dict, stack: str = "") -> str:

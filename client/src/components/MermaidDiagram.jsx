@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 
-mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+// suppressErrorRendering stops Mermaid from injecting its own "Syntax error"
+// bomb SVG into the DOM when a diagram fails to parse — we handle failures
+// ourselves and fall back to the raw text instead.
+mermaid.initialize({ startOnLoad: false, theme: 'dark', suppressErrorRendering: true });
 
 let renderCounter = 0;
 
@@ -12,17 +15,22 @@ const MermaidDiagram = ({ chart }) => {
     useEffect(() => {
         if (!chart || !containerRef.current) return;
         let cancelled = false;
+        setError(false);
         const id = `mermaid-diagram-${renderCounter++}`;
 
-        mermaid.render(id, chart)
-            .then(({ svg }) => {
+        // Validate first so a bad diagram never reaches render() (which would
+        // otherwise leave an orphan error node in the DOM).
+        (async () => {
+            try {
+                await mermaid.parse(chart);
+                const { svg } = await mermaid.render(id, chart);
                 if (!cancelled && containerRef.current) {
                     containerRef.current.innerHTML = svg;
                 }
-            })
-            .catch(() => {
+            } catch {
                 if (!cancelled) setError(true);
-            });
+            }
+        })();
 
         return () => { cancelled = true; };
     }, [chart]);
