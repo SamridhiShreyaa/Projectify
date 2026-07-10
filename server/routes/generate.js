@@ -1,57 +1,27 @@
 /**
  * Generate route — POST /api/generate
  *
- * Changes from original:
- * - Added per-user rate limiting (5 requests per minute)
- * - Added stricter input validation
- * - Better error messages
+ * Async ("job-style"): the LLM pipeline can take 60-150s on free-tier
+ * models, far past what a single HTTP request should hold open. Instead of
+ * blocking the request, this creates a `pending` Project immediately and
+ * returns 202, then runs the AI call in the background and updates the same
+ * document to `complete` (full brief) or `failed` (with generation_error)
+ * when it settles. The client polls GET /projects/:id until status changes.
  */
 
 const router = require('express').Router();
 const axios = require('axios');
 const authMiddleware = require('../middleware/auth');
+const createRateLimiter = require('../middleware/rateLimit');
 const Project = require('../models/Project');
+const Review = require('../models/Review');
+const { awardQuestAccept } = require('../utils/xp');
 
-// ---------- Simple in-memory rate limiter ----------
-// Key: userId → array of timestamps
-// For production, replace with Redis (e.g. express-rate-limit + rate-limit-redis)
-const rateLimitStore = new Map();
 const MAX_REQUESTS = 5;
-const WINDOW_MS = 60 * 1000; // 1 minute
-
-// Cleanup interval to prevent memory leaks from inactive users
-const cleanupInterval = setInterval(() => {
-    const windowStart = Date.now() - WINDOW_MS;
-    for (const [userId, timestamps] of rateLimitStore.entries()) {
-        const validTimestamps = timestamps.filter(t => t > windowStart);
-        if (validTimestamps.length === 0) {
-            rateLimitStore.delete(userId);
-        } else {
-            rateLimitStore.set(userId, validTimestamps);
-        }
-    }
-}, WINDOW_MS); // Run cleanup every minute
-cleanupInterval.unref(); // Allow Node process to exit even if interval is running
-
-function checkRateLimit(userId) {
-    const now = Date.now();
-    const windowStart = now - WINDOW_MS;
-
-    if (!rateLimitStore.has(userId)) {
-        rateLimitStore.set(userId, []);
-    }
-
-    // Purge old timestamps
-    const timestamps = rateLimitStore.get(userId).filter(t => t > windowStart);
-    rateLimitStore.set(userId, timestamps);
-
-    if (timestamps.length >= MAX_REQUESTS) {
-        return false;
-    }
-
-    timestamps.push(now);
-    return true;
-}
+const rateLimit = createRateLimiter({
+    max: MAX_REQUESTS,
+    message: `Rate limit exceeded. You can generate up to ${MAX_REQUESTS} projects per minute.`
+});
 
 // ---------- Input validation ----------
 const VALID_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
@@ -86,24 +56,24 @@ function validateInput(body) {
     return errors;
 }
 
-// ---------- Route ----------
-router.post('/', authMiddleware, async (req, res) => {
-    // Rate limit by user ID (authenticated, so userId is reliable)
-    const allowed = checkRateLimit(req.user.id);
-    if (!allowed) {
-        return res.status(429).json({
-            error: `Rate limit exceeded. You can generate up to ${MAX_REQUESTS} projects per minute.`
-        });
+function generationErrorFor(e) {
+    if (e.code === 'ECONNREFUSED') {
+        return 'AI service is unavailable. Please try again in a moment.';
     }
-
-    // Validate
-    const errors = validateInput(req.body);
-    if (errors.length > 0) {
-        return res.status(422).json({ error: 'Validation failed', details: errors });
+    if (e.code === 'ECONNABORTED' || (e.message && e.message.includes('timeout'))) {
+        return 'AI service timed out. Please try again.';
     }
+    if (e.response?.status === 429) {
+        return 'Too many requests to the AI service. Please try again shortly.';
+    }
+    if (e.response?.status === 422) {
+        return 'The AI service rejected this request.';
+    }
+    return 'Failed to generate project. Please try again.';
+}
 
-    const { topic, difficulty, stack, hours_per_week } = req.body;
-
+// Runs after the response is sent — updates the pending project in place.
+async function runGeneration(projectId, userId, { topic, difficulty, stack, hours_per_week }, sourceReviewId) {
     try {
         let aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8001';
         if (!aiUrl.startsWith('http')) {
@@ -118,45 +88,73 @@ router.post('/', authMiddleware, async (req, res) => {
                 stack: stack.trim(),
                 hours_per_week: Number(hours_per_week)
             },
-            { timeout: 30000 } // 30s timeout — LLM calls can be slow
+            { timeout: 150000 } // the pipeline chains 3+ sequential LLM calls; free-tier models can take 30-50s each
         );
 
-        const project = aiResponse.data;
+        const brief = aiResponse.data;
 
-        const saved = await Project.create({
-            userId: req.user.id,
-            ...project,
-            input: { topic, difficulty, stack, hours_per_week: Number(hours_per_week) }
-        });
+        // Optional provenance: this quest was forged from one of the user's
+        // repo reviews. Invalid or foreign ids are ignored, never fatal.
+        let provenance = {};
+        if (sourceReviewId) {
+            try {
+                const sourceReview = await Review.findOne({ _id: sourceReviewId, userId });
+                if (sourceReview) {
+                    provenance = {
+                        sourceReviewId: sourceReview._id,
+                        source_repo: sourceReview.repo
+                    };
+                }
+            } catch {
+                // CastError on garbage ids — ignore silently
+            }
+        }
 
-        res.json(saved);
+        const updated = await Project.findByIdAndUpdate(
+            projectId,
+            { ...brief, ...provenance, status: 'complete', generation_error: undefined },
+            { new: true }
+        );
+        if (!updated) return; // deleted while pending — nothing to finish
 
+        awardQuestAccept(userId, updated).catch(err =>
+            console.error('XP award (quest_accept) failed:', err.message)
+        );
     } catch (e) {
         console.error('Generate error:', e.response?.data || e.message);
+        await Project.findByIdAndUpdate(projectId, {
+            status: 'failed',
+            generation_error: generationErrorFor(e)
+        }).catch(err => console.error('Failed to record generation failure:', err.message));
+    }
+}
 
-        if (e.code === 'ECONNREFUSED') {
-            return res.status(503).json({
-                error: 'AI service is unavailable. Please try again in a moment.'
-            });
-        }
-        if (e.code === 'ECONNABORTED' || (e.message && e.message.includes('timeout'))) {
-            return res.status(504).json({
-                error: 'AI service timed out. Please try again.'
-            });
-        }
-        if (e.response?.status === 429) {
-            return res.status(429).json({
-                error: 'Too many requests. Please wait a moment and try again.'
-            });
-        }
-        if (e.response?.status === 422) {
-            return res.status(422).json({
-                error: 'Invalid request data.',
-                details: e.response.data?.detail || []
-            });
-        }
+// ---------- Route ----------
+router.post('/', authMiddleware, rateLimit, async (req, res) => {
+    // Validate
+    const errors = validateInput(req.body);
+    if (errors.length > 0) {
+        return res.status(422).json({ error: 'Validation failed', details: errors });
+    }
 
-        res.status(500).json({ error: 'Failed to generate project. Please try again.' });
+    const { topic, difficulty, stack, hours_per_week, source_review_id } = req.body;
+    const input = { topic, difficulty, stack, hours_per_week: Number(hours_per_week) };
+
+    try {
+        const pending = await Project.create({
+            userId: req.user.id,
+            title: `Forging: ${topic.trim()}`,
+            status: 'pending',
+            input
+        });
+
+        res.status(202).json(pending);
+
+        // Intentionally not awaited — the response above is the full contract
+        // for this request; runGeneration finishes the document later.
+        runGeneration(pending._id, req.user.id, input, source_review_id);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to start quest generation. Please try again.' });
     }
 });
 

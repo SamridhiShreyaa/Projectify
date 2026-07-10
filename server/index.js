@@ -25,6 +25,9 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/generate', require('./routes/generate'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/review', require('./routes/review'));
+app.use('/api/public', require('./routes/public'));
+app.use('/api/stats', require('./routes/stats'));
+app.use('/api/me', require('./routes/me'));
 
 // Health checks
 app.get('/health', (req, res) => res.json({ status: 'ok' }));

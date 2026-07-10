@@ -37,7 +37,44 @@ class CategoryScore(BaseModel):
 class ReviewOutput(BaseModel):
     repo: str
     mode: str = Field(..., description="'llm' (model-judged) or 'heuristic' (rule-based counting)")
+    language: str = Field("", description="Repo's primary language per GitHub metadata")
+    detected_stack: str = Field("", description="Stack string detected from languages + tree markers, e.g. 'React + Node.js'")
     scores: dict[str, CategoryScore]
+
+
+class BriefInput(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    core_features: List[str] = Field(..., min_length=1)
+    stretch_goals: List[str] = Field(default_factory=list)
+    milestones: List[str] = Field(default_factory=list)
+    stack: str = ""
+
+
+class VerifyRequest(BaseModel):
+    repo_url: str = Field(..., min_length=3, max_length=300, description="GitHub repo URL")
+    brief: BriefInput
+
+
+class FeatureVerdict(BaseModel):
+    feature: str
+    verdict: str = Field(..., description="evident | partial | not_found")
+    evidence: str = ""
+
+
+class MilestoneVerdict(BaseModel):
+    milestone: str
+    verdict: str = Field(..., description="done | partial | not_started")
+    evidence: str = ""
+
+
+class VerifyOutput(BaseModel):
+    repo: str
+    mode: str = Field(..., description="'llm' or 'heuristic'")
+    language: str = ""
+    features: List[FeatureVerdict]
+    milestones: List[MilestoneVerdict]
+    stack_match: dict
+    completion: dict
 
 
 class SkeletonFile(BaseModel):

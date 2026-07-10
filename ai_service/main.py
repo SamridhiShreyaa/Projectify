@@ -13,7 +13,14 @@ from collections import defaultdict
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from models.schemas import GenerateRequest, ProjectOutput, ReviewRequest, ReviewOutput
+from models.schemas import (
+    GenerateRequest,
+    ProjectOutput,
+    ReviewRequest,
+    ReviewOutput,
+    VerifyRequest,
+    VerifyOutput,
+)
 from graph import run_pipeline
 from chains.review import (
     review_repo,
@@ -21,6 +28,7 @@ from chains.review import (
     RepoNotFoundError,
     GitHubRateLimitError,
 )
+from chains.verify import verify_quest
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -137,6 +145,25 @@ async def review_repository(request: ReviewRequest, http_request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Review failed: {str(e)}")
+
+
+@app.post("/verify-quest", response_model=VerifyOutput)
+async def verify_quest_route(request: VerifyRequest, http_request: Request):
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    _check_rate_limit(client_ip)
+
+    try:
+        return verify_quest(request.repo_url, request.brief.model_dump())
+    except InvalidRepoURLError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RepoNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GitHubRateLimitError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
 @app.get("/health")

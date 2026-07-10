@@ -1,7 +1,22 @@
 node_modules
 .env
+.env.*
+!.env.example
 .mongodb-data
 .DS_Store
+
+# Editor / assistant local config
+.claude/
+.vscode/
+.idea/
+
+# Build output
+client/dist/
+dist/
+
+# Logs
+*.log
+npm-debug.log*
 
 # Python
 __pycache__/

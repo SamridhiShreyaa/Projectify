@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
-    const { isAuthenticated, email, logout } = useAuth();
+    const { isAuthenticated, email, name, logout } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -13,7 +13,7 @@ const Navbar = () => {
 
     const isActive = (path) => location.pathname === path ? 'active' : '';
 
-    const playerName = email ? email.split('@')[0].toUpperCase() : 'GUEST';
+    const playerName = (name || (email ? email.split('@')[0] : 'GUEST')).toUpperCase();
 
     return (
         <nav className="navbar">
@@ -25,6 +25,9 @@ const Navbar = () => {
             <div className="navbar-links">
                 {isAuthenticated ? (
                     <>
+                        <Link to="/dashboard" className={`navbar-link ${isActive('/dashboard')}`}>
+                            🏠 Dashboard
+                        </Link>
                         <Link to="/" className={`navbar-link ${isActive('/')}`}>
                             ⚡ Quests
                         </Link>
@@ -34,23 +37,32 @@ const Navbar = () => {
                         <Link to="/review" className={`navbar-link ${isActive('/review')}`}>
                             🔍 Inspect
                         </Link>
-                        <span style={{
+                        <Link to="/gallery" className={`navbar-link ${isActive('/gallery')}`}>
+                            🏰 Board
+                        </Link>
+                        <Link to="/profile" title="Account settings" style={{
                             fontFamily: 'var(--pixel-font)',
                             fontSize: '0.45rem',
                             color: 'var(--pixel-gold)',
                             padding: '0.4rem 0.6rem',
                             border: '2px solid var(--pixel-gold)',
-                            background: 'rgba(255,215,0,0.05)',
-                            textTransform: 'uppercase'
+                            background: location.pathname === '/profile'
+                                ? 'rgba(255,215,0,0.15)'
+                                : 'rgba(255,215,0,0.05)',
+                            textTransform: 'uppercase',
+                            textDecoration: 'none'
                         }}>
                             🎮 {playerName}
-                        </span>
+                        </Link>
                         <button onClick={handleLogout} className="btn btn-ghost" style={{ fontSize: '0.5rem', padding: '0.4rem 0.6rem' }}>
                             ⏻ Exit
                         </button>
                     </>
                 ) : (
                     <>
+                        <Link to="/gallery" className={`navbar-link ${isActive('/gallery')}`}>
+                            🏰 Board
+                        </Link>
                         <Link to="/login" className={`navbar-link ${isActive('/login')}`}>
                             🔑 Login
                         </Link>

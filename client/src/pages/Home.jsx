@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../api/axios';
+
+const CUSTOM = '__custom__';
 
 const TOPICS = [
     { value: 'Web Development', icon: '🌐', label: 'Web Development' },
@@ -25,9 +27,15 @@ const STACKS = [
 ];
 
 const Home = () => {
-    const [topic, setTopic] = useState('');
+    const location = useLocation();
+    // Prefill from the repo reviewer's "Forge Improvement Quest" action
+    const prefill = location.state?.prefill;
+
+    const [topic, setTopic] = useState(prefill?.topic ? CUSTOM : '');
+    const [customTopic, setCustomTopic] = useState(prefill?.topic || '');
     const [difficulty, setDifficulty] = useState('');
-    const [stack, setStack] = useState('');
+    const [stack, setStack] = useState(prefill?.stack ? CUSTOM : '');
+    const [customStack, setCustomStack] = useState(prefill?.stack || '');
     const [hoursPerWeek, setHoursPerWeek] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -37,8 +45,19 @@ const Home = () => {
         e.preventDefault();
         setError('');
 
-        if (!topic || !difficulty || !stack || !hoursPerWeek) {
+        const effectiveTopic = (topic === CUSTOM ? customTopic : topic).trim();
+        const effectiveStack = (stack === CUSTOM ? customStack : stack).trim();
+
+        if (!effectiveTopic || !difficulty || !effectiveStack || !hoursPerWeek) {
             setError('All quest parameters required!');
+            return;
+        }
+        if (effectiveTopic.length < 3) {
+            setError('topic must be at least 3 characters');
+            return;
+        }
+        if (effectiveStack.length < 2) {
+            setError('stack must be at least 2 characters');
             return;
         }
 
@@ -46,10 +65,16 @@ const Home = () => {
 
         try {
             const res = await api.post('/generate', {
-                topic, difficulty, stack,
-                hours_per_week: parseInt(hoursPerWeek)
+                topic: effectiveTopic,
+                difficulty,
+                stack: effectiveStack,
+                hours_per_week: parseInt(hoursPerWeek),
+                // Provenance: quest forged from a repo review (ignored if absent)
+                ...(prefill?.source_review_id
+                    ? { source_review_id: prefill.source_review_id }
+                    : {})
             });
-            navigate('/result', { state: { project: res.data } });
+            navigate(`/result/${res.data._id}`, { state: { project: res.data } });
         } catch (err) {
             setError(err.response?.data?.error || 'Quest generation failed. Try again.');
         } finally {
@@ -101,6 +126,23 @@ const Home = () => {
                     </div>
 
                     <form onSubmit={handleGenerate}>
+                        {prefill?.source_repo && (
+                            <div style={{
+                                fontFamily: 'var(--pixel-font)',
+                                fontSize: '0.45rem',
+                                color: 'var(--pixel-gold)',
+                                textAlign: 'center',
+                                marginBottom: '1rem',
+                                letterSpacing: '0.1em'
+                            }}>
+                                ⚒ FORGING IMPROVEMENT QUEST FOR {prefill.source_repo.toUpperCase()}
+                                <div style={{ color: 'var(--pixel-dim)', marginTop: '0.35rem' }}>
+                                    {prefill.stack
+                                        ? 'WEAPONS AUTO-DETECTED FROM THE REPO — EDIT IF NEEDED'
+                                        : 'OLDER INSPECTION — RE-INSPECT THE REPO TO AUTO-DETECT WEAPONS, OR PICK THEM BELOW'}
+                                </div>
+                            </div>
+                        )}
                         {error && <div className="error-message" style={{ marginBottom: '1rem' }}>⚠ {error}</div>}
 
                         <div className="form-grid">
@@ -112,7 +154,21 @@ const Home = () => {
                                     {TOPICS.map(t => (
                                         <option key={t.value} value={t.value}>{t.icon} {t.label}</option>
                                     ))}
+                                    <option value={CUSTOM}>✎ Custom Quest…</option>
                                 </select>
+                                {topic === CUSTOM && (
+                                    <input
+                                        type="text"
+                                        className="form-select"
+                                        style={{ marginTop: '0.5rem' }}
+                                        placeholder="Describe your quest domain…"
+                                        value={customTopic}
+                                        onChange={(e) => setCustomTopic(e.target.value)}
+                                        minLength={3}
+                                        maxLength={200}
+                                        required
+                                    />
+                                )}
                             </div>
 
                             <div className="form-group">
@@ -147,7 +203,21 @@ const Home = () => {
                                     {STACKS.map(s => (
                                         <option key={s} value={s}>{s}</option>
                                     ))}
+                                    <option value={CUSTOM}>✎ Custom weapon…</option>
                                 </select>
+                                {stack === CUSTOM && (
+                                    <input
+                                        type="text"
+                                        className="form-select"
+                                        style={{ marginTop: '0.5rem' }}
+                                        placeholder="Name your weapons (e.g. Svelte + Go)…"
+                                        value={customStack}
+                                        onChange={(e) => setCustomStack(e.target.value)}
+                                        minLength={2}
+                                        maxLength={200}
+                                        required
+                                    />
+                                )}
                             </div>
                         </div>
 

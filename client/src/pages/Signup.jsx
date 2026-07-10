@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 
 const Signup = () => {
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -29,9 +30,9 @@ const Signup = () => {
         setLoading(true);
 
         try {
-            const res = await api.post('/auth/signup', { email, password });
-            login(res.data.token, res.data.email);
-            navigate('/');
+            const res = await api.post('/auth/signup', { email, password, name: name.trim() || undefined });
+            login(res.data.token, res.data.email, res.data.name);
+            navigate('/dashboard');
         } catch (err) {
             setError(err.response?.data?.error || 'Registration failed. Try again.');
         } finally {
@@ -59,6 +60,20 @@ const Signup = () => {
 
                 <form className="auth-form" onSubmit={handleSubmit}>
                     {error && <div className="error-message">⚠ {error}</div>}
+
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="signup-name">🧝 Display Name <span style={{ opacity: 0.5 }}>(optional)</span></label>
+                        <input
+                            id="signup-name"
+                            className="form-input"
+                            type="text"
+                            placeholder="Your hero name"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            maxLength={50}
+                            autoComplete="name"
+                        />
+                    </div>
 
                     <div className="form-group">
                         <label className="form-label" htmlFor="signup-email">📧 Player Email</label>

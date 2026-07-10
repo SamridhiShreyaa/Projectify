@@ -18,8 +18,8 @@ const Login = () => {
 
         try {
             const res = await api.post('/auth/login', { email, password });
-            login(res.data.token, res.data.email);
-            navigate('/');
+            login(res.data.token, res.data.email, res.data.name);
+            navigate('/dashboard');
         } catch (err) {
             setError(err.response?.data?.error || 'Connection failed. Is the server running?');
         } finally {

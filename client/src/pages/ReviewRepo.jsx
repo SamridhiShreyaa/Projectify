@@ -1,38 +1,71 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
-
-const CATEGORY_LABELS = {
-    architecture_clarity: { icon: '🏛️', label: 'Architecture Clarity' },
-    test_coverage_signal: { icon: '🧪', label: 'Test Coverage Signal' },
-    documentation_quality: { icon: '📖', label: 'Documentation Quality' },
-    hiring_signal: { icon: '💼', label: 'Hiring Signal' },
-};
-
-const scoreColor = (score) => {
-    if (score >= 8) return 'var(--pixel-green, #4ade80)';
-    if (score >= 5) return 'var(--pixel-gold, #facc15)';
-    return 'var(--pixel-red, #f87171)';
-};
+import ReviewHistoryCard from '../components/ReviewHistoryCard';
+import { CATEGORY_LABELS, scoreColor, improvementPrefill } from '../utils/reviewLabels';
 
 const ReviewRepo = () => {
     const [repoUrl, setRepoUrl] = useState('');
     const [review, setReview] = useState(null);
+    const [history, setHistory] = useState([]);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const navigate = useNavigate();
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/review')
+            .then(res => { if (!cancelled) setHistory(res.data); })
+            .catch(() => { /* ledger is best-effort; inspection still works */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    const runInspection = async (url) => {
         setError('');
         setReview(null);
         setLoading(true);
         try {
-            const res = await api.post('/review', { repo_url: repoUrl });
+            const res = await api.post('/review', { repo_url: url });
             setReview(res.data);
+            setHistory(prev => [res.data, ...prev]);
         } catch (err) {
             setError(err.response?.data?.error || 'Failed to review repository.');
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        runInspection(repoUrl);
+    };
+
+    const handleReinspect = (url) => {
+        setRepoUrl(url);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        runInspection(url);
+    };
+
+    const handleForgeQuest = async (rev) => {
+        // Ledger entries saved before stack auto-detection existed have no
+        // detected_stack/language — re-inspect first so the forge can
+        // auto-fill the weapons. Falls back to a manual pick if it fails.
+        if (!rev.detected_stack && !rev.language && rev.repo_url) {
+            setError('');
+            setLoading(true);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            try {
+                const res = await api.post('/review', { repo_url: rev.repo_url });
+                setReview(res.data);
+                setHistory(prev => [res.data, ...prev]);
+                rev = res.data;
+            } catch {
+                // forge with what we have — Home will ask for weapons manually
+            } finally {
+                setLoading(false);
+            }
+        }
+        navigate('/', { state: { prefill: improvementPrefill(rev) } });
     };
 
     return (
@@ -95,6 +128,32 @@ const ReviewRepo = () => {
                                 </div>
                             );
                         })}
+                        <div style={{ marginBottom: '2rem' }}>
+                            <button className="btn btn-primary" onClick={() => handleForgeQuest(review)}>
+                                ⚒ Forge Improvement Quest
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {history.length > 0 && (
+                    <div className="slide-up" style={{ marginTop: '1rem' }}>
+                        <h2 style={{
+                            fontFamily: 'var(--pixel-font)',
+                            fontSize: '0.7rem',
+                            letterSpacing: '0.1em',
+                            marginBottom: '1rem'
+                        }}>
+                            🗞 INSPECTION LEDGER
+                        </h2>
+                        {history.map((rev) => (
+                            <ReviewHistoryCard
+                                key={rev._id || `${rev.repo}-${rev.createdAt}`}
+                                review={rev}
+                                onReinspect={handleReinspect}
+                                onForgeQuest={handleForgeQuest}
+                            />
+                        ))}
                     </div>
                 )}
             </div>

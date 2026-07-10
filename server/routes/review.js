@@ -9,54 +9,18 @@
 const router = require('express').Router();
 const axios = require('axios');
 const authMiddleware = require('../middleware/auth');
+const createRateLimiter = require('../middleware/rateLimit');
 const Review = require('../models/Review');
+const { awardFirstReview } = require('../utils/xp');
 
-// ---------- Simple in-memory rate limiter (per user) ----------
-const rateLimitStore = new Map();
 const MAX_REQUESTS = 5;
-const WINDOW_MS = 60 * 1000; // 1 minute
-
-const cleanupInterval = setInterval(() => {
-    const windowStart = Date.now() - WINDOW_MS;
-    for (const [userId, timestamps] of rateLimitStore.entries()) {
-        const validTimestamps = timestamps.filter(t => t > windowStart);
-        if (validTimestamps.length === 0) {
-            rateLimitStore.delete(userId);
-        } else {
-            rateLimitStore.set(userId, validTimestamps);
-        }
-    }
-}, WINDOW_MS);
-cleanupInterval.unref();
-
-function checkRateLimit(userId) {
-    const now = Date.now();
-    const windowStart = now - WINDOW_MS;
-
-    if (!rateLimitStore.has(userId)) {
-        rateLimitStore.set(userId, []);
-    }
-
-    const timestamps = rateLimitStore.get(userId).filter(t => t > windowStart);
-    rateLimitStore.set(userId, timestamps);
-
-    if (timestamps.length >= MAX_REQUESTS) {
-        return false;
-    }
-
-    timestamps.push(now);
-    return true;
-}
+const rateLimit = createRateLimiter({
+    max: MAX_REQUESTS,
+    message: `Rate limit exceeded. You can review up to ${MAX_REQUESTS} repos per minute.`
+});
 
 // ---------- Routes ----------
-router.post('/', authMiddleware, async (req, res) => {
-    const allowed = checkRateLimit(req.user.id);
-    if (!allowed) {
-        return res.status(429).json({
-            error: `Rate limit exceeded. You can review up to ${MAX_REQUESTS} repos per minute.`
-        });
-    }
-
+router.post('/', authMiddleware, rateLimit, async (req, res) => {
     const { repo_url } = req.body;
     if (!repo_url || typeof repo_url !== 'string' || repo_url.trim().length < 3) {
         return res.status(422).json({ error: 'repo_url is required' });
@@ -71,7 +35,7 @@ router.post('/', authMiddleware, async (req, res) => {
         const aiResponse = await axios.post(
             `${aiUrl}/review-repo`,
             { repo_url: repo_url.trim() },
-            { timeout: 60000 } // repo fetch + LLM scoring can be slow
+            { timeout: 120000 } // repo fetch + LLM scoring can be slow on free-tier models
         );
 
         const saved = await Review.create({
@@ -79,6 +43,10 @@ router.post('/', authMiddleware, async (req, res) => {
             repo_url: repo_url.trim(),
             ...aiResponse.data
         });
+
+        awardFirstReview(req.user.id, saved._id).catch(err =>
+            console.error('XP award (first_review) failed:', err.message)
+        );
 
         res.json(saved);
 

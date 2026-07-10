@@ -64,10 +64,17 @@ def _gh_get(path: str) -> dict:
     if cached and now - cached[0] < CACHE_TTL_SECONDS:
         return cached[1]
 
+    # Optional token lifts the unauthenticated 60 req/hr cap to 5000 req/hr.
+    # Read at call time (not import time) so tests and .env reloads apply.
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     import httpx
     res = httpx.get(
         f"{GITHUB_API}{path}",
-        headers={"Accept": "application/vnd.github+json"},
+        headers=headers,
         timeout=15,
         follow_redirects=True,
     )
@@ -89,7 +96,7 @@ def _gh_get(path: str) -> dict:
 
 
 def fetch_repo_data(repo_url: str) -> dict:
-    """Fetch repo metadata, file tree, and README for a public GitHub repo."""
+    """Fetch repo metadata, file tree, README, and languages for a public GitHub repo."""
     owner, repo = _parse_repo_url(repo_url)
 
     meta = _gh_get(f"/repos/{owner}/{repo}")
@@ -105,6 +112,12 @@ def fetch_repo_data(repo_url: str) -> dict:
     except RepoNotFoundError:
         pass  # repo without a README is fine — it just scores lower
 
+    languages = {}
+    try:
+        languages = _gh_get(f"/repos/{owner}/{repo}/languages") or {}
+    except Exception:
+        pass  # bytes-by-language is a nice-to-have; detection degrades gracefully
+
     return {
         "full_name": meta.get("full_name", f"{owner}/{repo}"),
         "description": meta.get("description") or "",
@@ -112,7 +125,74 @@ def fetch_repo_data(repo_url: str) -> dict:
         "default_branch": default_branch,
         "tree": tree,
         "readme": readme,
+        "languages": languages,
+        "detected_stack": detect_stack(languages, tree, meta.get("language") or ""),
     }
+
+
+# ---------- Stack detection ----------
+# Framework/tooling markers found in the file tree, checked in order; each
+# maps a filename fragment to the display name used in stack strings.
+_STACK_TREE_MARKERS = [
+    ("next.config", "Next.js"),
+    (".jsx", "React"),
+    (".tsx", "React"),
+    (".vue", "Vue"),
+    ("svelte.config", "Svelte"),
+    ("package.json", "Node.js"),
+    ("manage.py", "Django"),
+    ("go.mod", "Go"),
+    ("cargo.toml", "Rust"),
+    ("pom.xml", "Java"),
+    ("build.gradle", "Java"),
+    ("gemfile", "Ruby"),
+    ("composer.json", "PHP"),
+]
+
+# GitHub reports markup/config as "languages" — not stack material
+_NOISE_LANGUAGES = {
+    "CSS", "SCSS", "Less", "HTML", "Dockerfile", "Makefile", "CMake",
+    "Shell", "Batchfile", "PowerShell", "Procfile", "Nix",
+}
+
+# Languages that a tree marker already implies — don't repeat them
+_LANG_IMPLIED_BY = {
+    "JavaScript": {"React", "Next.js", "Vue", "Svelte", "Node.js"},
+    "TypeScript": {"React", "Next.js", "Vue", "Svelte", "Node.js"},
+    "Python": {"Django"},
+    "Go": {"Go"},
+    "Rust": {"Rust"},
+    "Java": {"Java"},
+    "Ruby": {"Ruby"},
+    "PHP": {"PHP"},
+}
+
+
+def detect_stack(languages: dict, tree: list, primary_language: str = "") -> str:
+    """Compose a human stack string ("React + Node.js") from GitHub's
+    bytes-by-language stats plus framework markers in the file tree."""
+    lower_tree = [p.lower() for p in tree or []]
+
+    frameworks = []
+    for marker, name in _STACK_TREE_MARKERS:
+        if name not in frameworks and any(marker in p for p in lower_tree):
+            frameworks.append(name)
+
+    top_languages = [
+        lang for lang, _ in
+        sorted((languages or {}).items(), key=lambda kv: kv[1], reverse=True)
+        if lang not in _NOISE_LANGUAGES
+    ][:3]
+    if not top_languages and primary_language:
+        top_languages = [primary_language]
+
+    parts = list(frameworks)
+    for lang in top_languages:
+        implied = _LANG_IMPLIED_BY.get(lang, set())
+        if lang not in parts and not (implied & set(frameworks)):
+            parts.append(lang)
+
+    return " + ".join(parts)[:200]
 
 
 # ---------- LLM reviewer ----------
@@ -195,6 +275,8 @@ def review_repo(repo_url: str) -> dict:
                 return {
                     "repo": repo_data["full_name"],
                     "mode": "llm",
+                    "language": repo_data["language"],
+                    "detected_stack": repo_data["detected_stack"],
                     "scores": _normalize(result),
                 }
             print("[WARN] LLM review malformed, falling back to heuristics")
@@ -204,6 +286,8 @@ def review_repo(repo_url: str) -> dict:
     return {
         "repo": repo_data["full_name"],
         "mode": "heuristic",
+        "language": repo_data["language"],
+        "detected_stack": repo_data["detected_stack"],
         "scores": _heuristic_review(repo_data),
     }
 

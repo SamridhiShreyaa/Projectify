@@ -103,7 +103,7 @@ def _get_llm():
         api_key=api_key,
         base_url=base_url,
         temperature=0.6,
-        max_tokens=1200,
+        max_tokens=2500,
     )
 
 
@@ -125,11 +125,25 @@ def expand_project(project: dict, stack: str = "") -> dict:
             })
             # Carry over any fields the LLM didn't include
             merged = {**project, **result}
-            # Guarantee generated extras are present even if the LLM omitted them
-            if not merged.get("skeleton_files"):
+            # JsonOutputParser accepts truncated JSON, so a response cut off at
+            # max_tokens can silently drop trailing fields or leave half-built
+            # skeleton entries — backfill everything required downstream.
+            merged["skeleton_files"] = [
+                f for f in merged.get("skeleton_files") or []
+                if isinstance(f, dict) and f.get("path") and f.get("content")
+            ]
+            if not merged["skeleton_files"]:
                 merged["skeleton_files"] = _mock_skeleton_files(merged, stack)
             if not _is_valid_mermaid(merged.get("mermaid_diagram", "")):
                 merged["mermaid_diagram"] = _mock_mermaid_diagram(merged, stack)
+            if not merged.get("milestones"):
+                merged["milestones"] = _mock_milestones(merged)
+            if not merged.get("file_structure"):
+                merged["file_structure"] = FILE_STRUCTURES[_stack_key(stack)]
+            if not merged.get("learning_outcomes"):
+                merged["learning_outcomes"] = random.sample(LEARNING_OUTCOMES, 4)
+            if not merged.get("resources"):
+                merged["resources"] = random.sample(RESOURCES, 4)
             return merged
         except Exception as e:
             print(f"[WARN] LLM expansion failed, falling back to mock: {e}")
@@ -401,16 +415,19 @@ def _mock_skeleton_files(project: dict, stack: str = "") -> list:
     return [dict(f) for f in SKELETON_FILES[_stack_key(stack)]]
 
 
-def _mock_expand(project: dict, stack: str = "") -> dict:
-    file_structure = FILE_STRUCTURES[_stack_key(stack)]
-
+def _mock_milestones(project: dict) -> list:
     features = project.get("core_features", [])
-    milestones = [
+    return [
         f"Week 1: Project setup, environment configuration, and implement {features[0] if features else 'core architecture'}",
         f"Week 2: Build {features[1] if len(features) > 1 else 'main features'} and {features[2] if len(features) > 2 else 'data layer'}",
         f"Week 3: Implement {features[3] if len(features) > 3 else 'remaining features'} and integrate all components",
         "Week 4: Testing, bug fixes, UI polish, and deployment preparation",
     ]
+
+
+def _mock_expand(project: dict, stack: str = "") -> dict:
+    file_structure = FILE_STRUCTURES[_stack_key(stack)]
+    milestones = _mock_milestones(project)
 
     return {
         **project,

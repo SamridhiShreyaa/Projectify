@@ -1,28 +1,225 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import JSZip from 'jszip';
-import Milestone from '../components/Milestone';
-import MermaidDiagram from '../components/MermaidDiagram';
+import { useState, useEffect } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import api from '../api/axios';
+import QuestBrief from '../components/QuestBrief';
+import TurnInReport from '../components/TurnInReport';
+
+// Cosmetic pipeline cycler — the AI service doesn't stream real per-stage
+// progress, so this advances on a timer to give the wait some texture while
+// the actual signal (project.status) is polled in the background.
+const GENERATION_STAGES = [
+    'Consulting the Quest Master…',
+    'Scoping requirements to your time budget…',
+    'Sketching the architecture…',
+    'Writing milestones, skeleton files, and resources…',
+    'Reviewing the finished brief…',
+];
 
 const Result = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const project = location.state?.project;
+    const { id } = useParams();
 
-    const downloadStarterFiles = async () => {
-        const zip = new JSZip();
-        project.skeleton_files.forEach(({ path, content }) => {
-            zip.file(path, content);
+    const [project, setProject] = useState(location.state?.project || null);
+    const [loading, setLoading] = useState(!location.state?.project && !!id);
+    const [error, setError] = useState('');
+    const [completedMilestones, setCompletedMilestones] = useState(
+        location.state?.project?.completed_milestones || []
+    );
+    const [milestoneDates, setMilestoneDates] = useState(
+        location.state?.project?.milestone_dates || []
+    );
+    const [shareState, setShareState] = useState('idle');
+    const [repoUrl, setRepoUrl] = useState('');
+    const [turnInState, setTurnInState] = useState('idle'); // idle | loading
+    const [turnInError, setTurnInError] = useState('');
+    const [turnInXp, setTurnInXp] = useState(0);
+    const [publishing, setPublishing] = useState(false);
+    const [turnInHistory, setTurnInHistory] = useState([]);
+    const [stageIndex, setStageIndex] = useState(0);
+    const [elapsed, setElapsed] = useState(0);
+
+    useEffect(() => {
+        if (project || !id) return;
+        let cancelled = false;
+        api.get(`/projects/${id}`)
+            .then(res => {
+                if (cancelled) return;
+                setProject(res.data);
+                setCompletedMilestones(res.data.completed_milestones || []);
+                setMilestoneDates(res.data.milestone_dates || []);
+            })
+            .catch(() => {
+                if (!cancelled) setError('Quest not found in your log.');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [id, project]);
+
+    useEffect(() => {
+        if (project?.repo_url) setRepoUrl(project.repo_url);
+    }, [project]);
+
+    const projectId = id || project?._id;
+
+    // Poll a pending quest until the AI service finishes generating it.
+    useEffect(() => {
+        if (project?.status !== 'pending' || !projectId) return;
+        let cancelled = false;
+        let polling = false;
+
+        const poll = async () => {
+            if (polling) return;
+            polling = true;
+            try {
+                const res = await api.get(`/projects/${projectId}`);
+                if (!cancelled && res.data.status !== 'pending') {
+                    setProject(res.data);
+                    setCompletedMilestones(res.data.completed_milestones || []);
+                    setMilestoneDates(res.data.milestone_dates || []);
+                }
+            } catch {
+                // transient network hiccup — the next tick retries
+            } finally {
+                polling = false;
+            }
+        };
+
+        const pollInterval = setInterval(poll, 3000);
+        const stageInterval = setInterval(() => {
+            setStageIndex(i => Math.min(i + 1, GENERATION_STAGES.length - 1));
+        }, 12000);
+        const elapsedInterval = setInterval(() => setElapsed(e => e + 1), 1000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(pollInterval);
+            clearInterval(stageInterval);
+            clearInterval(elapsedInterval);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project?.status, projectId]);
+
+    const handleRetry = async () => {
+        try {
+            await api.delete(`/projects/${projectId}`);
+        } catch {
+            // best-effort cleanup — navigate home regardless
+        }
+        navigate('/', {
+            state: { prefill: { topic: project.input?.topic, stack: project.input?.stack } }
         });
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const slug = (project.title || 'project')
-            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        a.download = `${slug}-starter.zip`;
-        a.click();
-        URL.revokeObjectURL(url);
     };
+
+    useEffect(() => {
+        if (!projectId || !project?.turn_in) return;
+        let cancelled = false;
+        api.get(`/projects/${projectId}/turn-ins`)
+            .then(res => { if (!cancelled) setTurnInHistory(res.data); })
+            .catch(() => { /* history is decorative — turn-in still works without it */ });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, project?.turn_in?.reviewId]);
+
+    const handleTurnIn = async (e) => {
+        e.preventDefault();
+        if (!projectId || !repoUrl.trim() || turnInState === 'loading') return;
+        setTurnInState('loading');
+        setTurnInError('');
+        setTurnInXp(0);
+        try {
+            const res = await api.post(`/projects/${projectId}/turn-in`, {
+                repo_url: repoUrl.trim()
+            });
+            setProject(res.data.project);
+            setCompletedMilestones(res.data.project.completed_milestones || []);
+            if (res.data.xp_awarded) setTurnInXp(res.data.xp_awarded);
+        } catch (err) {
+            setTurnInError(err.response?.data?.error || 'Failed to verify the quest. Try again.');
+        } finally {
+            setTurnInState('idle');
+        }
+    };
+
+    const handleToggleMilestone = async (index) => {
+        if (!projectId) return;
+        const prev = completedMilestones;
+        const next = prev.includes(index)
+            ? prev.filter(i => i !== index)
+            : [...prev, index];
+        setCompletedMilestones(next); // optimistic
+        try {
+            await api.patch(`/projects/${projectId}/progress`, {
+                completed_milestones: next
+            });
+        } catch {
+            setCompletedMilestones(prev); // revert
+            setError('Failed to save progress. Try again.');
+        }
+    };
+
+    const handleSetMilestoneDate = async (index, date) => {
+        if (!projectId) return;
+        const prev = milestoneDates;
+        const next = [...prev];
+        while (next.length <= index) next.push('');
+        next[index] = date || '';
+        setMilestoneDates(next); // optimistic
+        try {
+            await api.patch(`/projects/${projectId}/milestone-dates`, {
+                milestone_dates: next
+            });
+        } catch {
+            setMilestoneDates(prev); // revert
+            setError('Failed to save the target date. Try again.');
+        }
+    };
+
+    const handleTogglePublish = async () => {
+        if (!projectId || publishing) return;
+        setPublishing(true);
+        try {
+            if (project.published) {
+                await api.delete(`/projects/${projectId}/publish`);
+                setProject({ ...project, published: false });
+            } else {
+                const res = await api.post(`/projects/${projectId}/publish`);
+                setProject({ ...project, published: true, published_at: res.data.published_at });
+            }
+        } catch {
+            setError('Failed to update the quest board listing.');
+        } finally {
+            setPublishing(false);
+        }
+    };
+
+    const handleShare = async () => {
+        if (!projectId) return;
+        try {
+            const res = await api.post(`/projects/${projectId}/share`);
+            const url = `${window.location.origin}/share/${res.data.share_token}`;
+            await navigator.clipboard.writeText(url);
+            setShareState('copied');
+            setTimeout(() => setShareState('idle'), 2000);
+        } catch {
+            setError('Failed to create share link.');
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="page-container">
+                <div className="container">
+                    <div className="loading-overlay">
+                        <div className="loading-spinner-lg"></div>
+                        <p className="loading-text">Loading quest...</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     if (!project) {
         return (
@@ -31,7 +228,7 @@ const Result = () => {
                     <div className="empty-state">
                         <div className="icon">🔍</div>
                         <h3>NO QUEST DATA</h3>
-                        <p>Accept a quest first or check your quest log.</p>
+                        <p>{error || 'Accept a quest first or check your quest log.'}</p>
                         <button className="btn btn-primary" onClick={() => navigate('/')}>
                             ⚔ Accept a Quest
                         </button>
@@ -41,128 +238,127 @@ const Result = () => {
         );
     }
 
-    const difficultyXP = { beginner: 30, intermediate: 60, advanced: 100 };
-    const xp = difficultyXP[project.input?.difficulty] || 50;
+    if (project.status === 'pending') {
+        return (
+            <div className="page-container">
+                <div className="container">
+                    <div className="loading-overlay">
+                        <div className="loading-spinner-lg"></div>
+                        <p className="loading-text">⚔ Forging your quest...</p>
+                        <p style={{ color: 'var(--pixel-gold)', fontSize: '0.8rem', margin: '0.5rem 0' }}>
+                            {GENERATION_STAGES[stageIndex]}
+                        </p>
+                        <p style={{ color: 'var(--pixel-dim)', fontSize: '0.7rem' }}>
+                            {elapsed}s elapsed — free-tier models can take a minute or two.
+                            This page updates itself, no need to refresh.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (project.status === 'failed') {
+        return (
+            <div className="page-container">
+                <div className="container">
+                    <div className="empty-state">
+                        <div className="icon">⚠</div>
+                        <h3>THE FORGE FAILED</h3>
+                        <p>{project.generation_error || 'Quest generation failed. Please try again.'}</p>
+                        <button className="btn btn-primary" onClick={handleRetry}>
+                            ⚔ Try Again
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="page-container">
-            <div className="result-container">
-                {/* Quest Complete Banner */}
-                <div className="slide-up" style={{
-                    textAlign: 'center',
-                    marginBottom: '2rem',
-                    padding: '1.5rem',
-                    border: '3px solid var(--pixel-gold)',
-                    background: 'rgba(255,215,0,0.05)',
-                    boxShadow: 'var(--pixel-shadow), var(--pixel-shadow-gold)'
-                }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🏆</div>
-                    <div style={{
-                        fontFamily: 'var(--pixel-font)',
-                        fontSize: '0.9rem',
-                        color: 'var(--pixel-gold)',
-                        textShadow: 'var(--pixel-shadow-gold)',
-                        marginBottom: '0.5rem'
-                    }}>
-                        QUEST GENERATED!
-                    </div>
-                    <div className="xp-bar-container" style={{ maxWidth: '300px', margin: '0.75rem auto 0.5rem' }}>
-                        <div className="xp-bar-fill" style={{ width: `${xp}%` }}></div>
-                    </div>
-                    <div style={{
-                        fontFamily: 'var(--pixel-font)',
-                        fontSize: '0.4rem',
-                        color: 'var(--pixel-green)'
-                    }}>
-                        +{xp} XP EARNED
-                    </div>
+            {error && (
+                <div className="container">
+                    <div className="error-message" style={{ marginBottom: '1rem' }}>⚠ {error}</div>
                 </div>
+            )}
+            <QuestBrief
+                project={project}
+                completedMilestones={completedMilestones}
+                onToggleMilestone={projectId ? handleToggleMilestone : undefined}
+                onShare={projectId ? handleShare : undefined}
+                shareState={shareState}
+                milestoneDates={milestoneDates}
+                onSetMilestoneDate={projectId ? handleSetMilestoneDate : undefined}
+            />
 
-                <div className="result-header slide-up" style={{ animationDelay: '0.05s' }}>
-                    <h1 className="gradient-text">{project.title}</h1>
-                    <p>{project.description}</p>
-
-                    {project.input && (
-                        <div className="result-meta">
-                            <span className="meta-tag">📂 {project.input.topic}</span>
-                            <span className="meta-tag">📊 {project.input.difficulty}</span>
-                            <span className="meta-tag">🛡️ {project.input.stack}</span>
-                            <span className="meta-tag">⏱️ {project.input.hours_per_week}h/week</span>
-                        </div>
-                    )}
-                </div>
-
-                {project.core_features?.length > 0 && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.1s' }}>
-                        <h3><span className="icon">🎯</span> Core Loot</h3>
-                        <ul className="feature-list">
-                            {project.core_features.map((f, i) => <li key={i}>{f}</li>)}
-                        </ul>
-                    </div>
-                )}
-
-                {project.stretch_goals?.length > 0 && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.15s' }}>
-                        <h3><span className="icon">🚀</span> Bonus Loot</h3>
-                        <ul className="feature-list">
-                            {project.stretch_goals.map((g, i) => <li key={i}>{g}</li>)}
-                        </ul>
-                    </div>
-                )}
-
-                {project.milestones?.length > 0 && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.2s' }}>
-                        <h3><span className="icon">📅</span> Quest Stages</h3>
-                        {project.milestones.map((m, i) => <Milestone key={i} milestone={m} index={i} />)}
-                    </div>
-                )}
-
-                {project.mermaid_diagram && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.22s' }}>
-                        <h3><span className="icon">🗺️</span> Architecture Map</h3>
-                        <MermaidDiagram chart={project.mermaid_diagram} />
-                    </div>
-                )}
-
-                {project.file_structure && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.25s' }}>
-                        <h3><span className="icon">📁</span> Dungeon Map</h3>
-                        <div className="file-structure-block">{project.file_structure}</div>
-                    </div>
-                )}
-
-                {project.learning_outcomes?.length > 0 && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.3s' }}>
-                        <h3><span className="icon">📚</span> Skills Unlocked</h3>
-                        <ul className="feature-list">
-                            {project.learning_outcomes.map((o, i) => <li key={i}>{o}</li>)}
-                        </ul>
-                    </div>
-                )}
-
-                {project.resources?.length > 0 && (
-                    <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.35s' }}>
-                        <h3><span className="icon">🔗</span> Spell Scrolls</h3>
-                        <ul className="feature-list">
-                            {project.resources.map((r, i) => <li key={i}>{r}</li>)}
-                        </ul>
-                    </div>
-                )}
-
-                <div className="result-actions slide-up" style={{ animationDelay: '0.4s' }}>
-                    {project.skeleton_files?.length > 0 && (
-                        <button className="btn btn-primary" onClick={downloadStarterFiles}>
-                            📦 Download Starter Files
+            {projectId && (
+                <div className="container">
+                    <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                        <button
+                            className={`btn ${project.published ? 'btn-secondary' : 'btn-primary'}`}
+                            disabled={publishing}
+                            onClick={handleTogglePublish}
+                        >
+                            {publishing
+                                ? '…'
+                                : project.published
+                                    ? '🪧 Remove from Quest Board'
+                                    : '📣 Post to Quest Board'}
                         </button>
-                    )}
-                    <button className="btn btn-primary" onClick={() => navigate('/')}>
-                        ⚔ New Quest
-                    </button>
-                    <button className="btn btn-secondary" onClick={() => navigate('/saved')}>
-                        📜 Quest Log
-                    </button>
+                        {project.published && (
+                            <div style={{ fontSize: '0.65rem', opacity: 0.75, marginTop: '0.5rem' }}>
+                                This quest is public on the board — other adventurers can accept it.
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="pixel-card" style={{ marginTop: '1.5rem', padding: '1.25rem' }}>
+                        <h3>⚑ Turn In Quest</h3>
+                        <p style={{ fontSize: '0.75rem', opacity: 0.85, margin: '0.5rem 0 0.75rem' }}>
+                            Built it? Hand the guild your GitHub repo and the inspector will
+                            verify it against this quest's brief.
+                        </p>
+                        <form onSubmit={handleTurnIn} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <input
+                                type="text"
+                                className="form-input"
+                                placeholder="https://github.com/you/your-repo"
+                                value={repoUrl}
+                                onChange={(e) => setRepoUrl(e.target.value)}
+                                style={{ flex: '1 1 260px' }}
+                                disabled={turnInState === 'loading'}
+                            />
+                            <button
+                                type="submit"
+                                className="btn btn-primary"
+                                disabled={turnInState === 'loading' || !repoUrl.trim()}
+                            >
+                                {turnInState === 'loading' ? '🔍 Inspecting…' : '⚑ Turn In'}
+                            </button>
+                        </form>
+                        {turnInState === 'loading' && (
+                            <p style={{ fontSize: '0.7rem', opacity: 0.75, marginTop: '0.75rem' }}>
+                                The guild inspector is examining your work — this can take a minute…
+                            </p>
+                        )}
+                        {turnInError && (
+                            <div className="error-message" style={{ marginTop: '0.75rem' }}>⚠ {turnInError}</div>
+                        )}
+                        {turnInXp > 0 && (
+                            <div style={{ color: 'var(--pixel-gold)', marginTop: '0.75rem', fontSize: '0.8rem' }}>
+                                ✨ +{turnInXp} XP earned for verified progress!
+                            </div>
+                        )}
+                    </div>
+
+                    <TurnInReport
+                        turnIn={project.turn_in}
+                        repoUrl={project.repo_url || repoUrl}
+                        history={turnInHistory}
+                    />
                 </div>
-            </div>
+            )}
         </div>
     );
 };
