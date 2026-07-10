@@ -16,12 +16,14 @@ from fastapi.responses import JSONResponse
 from models.schemas import (
     GenerateRequest,
     ProjectOutput,
+    IdeasOutput,
     ReviewRequest,
     ReviewOutput,
     VerifyRequest,
     VerifyOutput,
 )
 from graph import run_pipeline
+from chains.idea import generate_ideas
 from chains.review import (
     review_repo,
     InvalidRepoURLError,
@@ -119,6 +121,7 @@ async def generate_project(request: GenerateRequest, http_request: Request):
             difficulty=request.difficulty,
             stack=request.stack.strip(),
             hours_per_week=request.hours_per_week,
+            chosen_idea=request.chosen_idea.model_dump() if request.chosen_idea else None,
         )
         return final_state["project"]
 
@@ -126,6 +129,33 @@ async def generate_project(request: GenerateRequest, http_request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+
+@app.post("/ideas", response_model=IdeasOutput)
+async def generate_ideas_route(request: GenerateRequest, http_request: Request):
+    """Return several distinct project options to choose from (no expansion).
+
+    Cheap first step of the "choose your quest" flow — one LLM call (or mock)
+    yields ~3 lightweight ideas; only the picked one is later expanded via
+    /generate.
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    _check_rate_limit(client_ip)
+    _validate_request(request)
+
+    try:
+        ideas = generate_ideas(
+            topic=request.topic.strip(),
+            difficulty=request.difficulty,
+            stack=request.stack.strip(),
+            hours=request.hours_per_week,
+            count=3,
+        )
+        return {"ideas": ideas}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Idea generation failed: {str(e)}")
 
 
 @app.post("/review-repo", response_model=ReviewOutput)

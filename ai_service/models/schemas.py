@@ -5,11 +5,22 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional
 
 
+class ChosenIdea(BaseModel):
+    """An idea the user picked from the options step, expanded as-is."""
+    title: str = Field(..., min_length=1, max_length=300)
+    description: str = ""
+    core_features: List[str] = Field(default_factory=list)
+    stretch_goals: List[str] = Field(default_factory=list)
+
+
 class GenerateRequest(BaseModel):
     topic: str = Field(..., min_length=3, max_length=200, description="Project topic or domain")
     difficulty: str = Field(..., description="beginner | intermediate | advanced")
     stack: str = Field(..., min_length=2, max_length=200, description="Tech stack")
     hours_per_week: int = Field(..., ge=1, le=80, description="Available hours per week")
+    chosen_idea: Optional[ChosenIdea] = Field(
+        None, description="A pre-chosen idea from the options step; expanded directly if present"
+    )
 
     @field_validator("difficulty")
     @classmethod
@@ -23,6 +34,18 @@ class GenerateRequest(BaseModel):
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
         return v.strip()
+
+
+class IdeaOption(BaseModel):
+    title: str
+    pitch: str = ""
+    description: str
+    core_features: List[str]
+    stretch_goals: List[str] = Field(default_factory=list)
+
+
+class IdeasOutput(BaseModel):
+    ideas: List[IdeaOption]
 
 
 class ReviewRequest(BaseModel):

@@ -7,9 +7,11 @@ An AI-powered, gamified project platform for developers. Give it a topic, diffic
 ## Features
 
 **Generate**
+- **Choose your quest** — every generation first proposes 3 distinct project options; expand each card to read the details, then accept the one you like (only your pick is saved and fully expanded)
 - AI-generated project briefs — title, description, core features, stretch goals, milestones, file structure, learning outcomes, resources
+- **Copy-paste AI build prompt** on every project — a structured prompt you can hand to ChatGPT/Claude/any LLM to get a step-by-step build plan
 - Downloadable starter-code skeletons + one-click Markdown export for each brief
-- Mermaid architecture diagram rendered inline
+- Mermaid architecture diagram rendered inline (LLM labels auto-sanitized so diagrams always parse)
 - Asynchronous generation — the request returns immediately and the brief fills in via background polling, so slow free-tier LLM calls never time out
 - Custom topic/stack input, or forge an "improvement quest" straight from a repo review (stack auto-detected)
 
@@ -142,8 +144,8 @@ npm run dev
 ## Usage
 
 1. Sign up / log in — you land on your **Dashboard** (stats, activity, recent quests).
-2. From the Quests page, enter a topic, difficulty, tech stack, and hours per week, then generate a brief.
-3. Track milestones, download the starter-code zip or export Markdown, and share a read-only link.
+2. From the Quests page, enter a topic, difficulty, tech stack, and hours per week, then **scout quests** — pick from 3 project options (expand each for details, or copy its AI build prompt).
+3. Track milestones, download the starter-code zip or export Markdown, copy the AI build prompt, and share a read-only link.
 4. Build the project, then **Turn In Quest** with your GitHub repo URL — the AI verifies it against the brief and awards XP.
 5. Publish a quest to the **Quest Board**, or accept someone else's; opt in to a public **adventurer profile** from Settings.
 6. Paste a public GitHub repo URL into the Inspect page to get portfolio-readiness scores.
@@ -162,7 +164,8 @@ curl -X POST http://localhost:8001/generate \
 ### AI Service (port 8001)
 | Method | Route | Description |
 |---|---|---|
-| POST | `/generate` | Generate a project brief |
+| POST | `/ideas` | Generate 3 distinct project options to choose from |
+| POST | `/generate` | Expand a project brief (optionally from a `chosen_idea`) |
 | POST | `/review-repo` | Score a public GitHub repo |
 | POST | `/verify-quest` | Verify a repo against a project brief (turn-in) |
 | GET | `/health` | Health check |
@@ -181,7 +184,8 @@ Auth, health, and `/api/public/*` are open; everything else requires `Authorizat
 **Quests**
 | Method | Route | Description |
 |---|---|---|
-| POST | `/api/generate` | Start generation — returns `202` + a pending project |
+| POST | `/api/generate/options` | Get 3 project options to choose from (nothing saved) |
+| POST | `/api/generate` | Start generation — returns `202` + a pending project (accepts `chosen_idea`) |
 | GET | `/api/projects` · `/api/projects/:id` | List / fetch the user's quests |
 | PATCH | `/api/projects/:id/progress` · `/milestone-dates` | Update milestone completion / target dates |
 | POST | `/api/projects/:id/turn-in` | Verify a repo against the brief, award XP |

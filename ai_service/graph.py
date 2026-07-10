@@ -36,6 +36,9 @@ class PipelineState(TypedDict, total=False):
     difficulty: str
     stack: str
     hours_per_week: int
+    # A pre-chosen idea (from the "choose your quest" step). When present the
+    # planner uses it directly instead of generating a fresh idea.
+    chosen_idea: dict
     # Working data
     project: dict
     review_notes: List[str]
@@ -44,12 +47,23 @@ class PipelineState(TypedDict, total=False):
 
 
 def planner(state: PipelineState) -> PipelineState:
-    raw_idea = generate_idea(
-        topic=state["topic"],
-        difficulty=state["difficulty"],
-        stack=state["stack"],
-        hours=state["hours_per_week"],
-    )
+    chosen = state.get("chosen_idea")
+    if chosen and str(chosen.get("title") or "").strip():
+        # The user already picked this idea from the options step — carry it
+        # straight into scoping/expansion rather than inventing a new one.
+        raw_idea = {
+            "title": str(chosen.get("title") or "").strip(),
+            "description": str(chosen.get("description") or "").strip(),
+            "core_features": [str(f).strip() for f in (chosen.get("core_features") or []) if str(f).strip()],
+            "stretch_goals": [str(s).strip() for s in (chosen.get("stretch_goals") or []) if str(s).strip()],
+        }
+    else:
+        raw_idea = generate_idea(
+            topic=state["topic"],
+            difficulty=state["difficulty"],
+            stack=state["stack"],
+            hours=state["hours_per_week"],
+        )
     return {"project": raw_idea, "node_trace": ["planner"]}
 
 
@@ -117,11 +131,19 @@ def get_pipeline():
     return _pipeline
 
 
-def run_pipeline(topic: str, difficulty: str, stack: str, hours_per_week: int) -> dict:
-    """Run the full pipeline; returns the final graph state."""
-    return get_pipeline().invoke({
+def run_pipeline(topic: str, difficulty: str, stack: str, hours_per_week: int,
+                 chosen_idea: dict = None) -> dict:
+    """Run the full pipeline; returns the final graph state.
+
+    When `chosen_idea` is provided (the user picked it from the options step),
+    the planner expands that idea instead of generating a new one.
+    """
+    state = {
         "topic": topic,
         "difficulty": difficulty,
         "stack": stack,
         "hours_per_week": hours_per_week,
-    })
+    }
+    if chosen_idea:
+        state["chosen_idea"] = chosen_idea
+    return get_pipeline().invoke(state)

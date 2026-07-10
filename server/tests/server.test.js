@@ -93,6 +93,16 @@ async function drainPendingGenerations(timeoutMs = 3000) {
     }
 }
 
+// Polls an async count function until it reaches `target` (or times out).
+// Used where a value is written by a fire-and-forget background step.
+async function waitForCount(countFn, target, timeoutMs = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        if (await countFn() >= target) return;
+        await new Promise(r => setTimeout(r, 10));
+    }
+}
+
 const VALID_GENERATE_PAYLOAD = {
     topic: 'web development',
     difficulty: 'beginner',
@@ -423,16 +433,160 @@ describe('POST /api/generate — success (async)', () => {
 
     it('awards quest_accept XP only after the background generation completes', async () => {
         const axios = require('axios');
-        axios.post = jest.fn().mockResolvedValueOnce({ data: MOCK_AI_RESPONSE });
+        // Hold the AI call open so the background job is provably still in
+        // flight when we assert "no XP yet" — otherwise a fast runner can
+        // finish the whole job before the assertion and flake (Expected 0).
+        let resolveAi;
+        axios.post = jest.fn().mockReturnValueOnce(new Promise((r) => { resolveAi = r; }));
 
         const res = await request(app)
             .post('/api/generate')
             .set('Authorization', `Bearer ${token}`)
             .send(VALID_GENERATE_PAYLOAD);
 
+        // Background generation is blocked on the pending AI call — no XP yet.
         expect(await XpEvent.countDocuments({ type: 'quest_accept' })).toBe(0);
+
+        // Release the AI call; the job now completes and awards XP.
+        resolveAi({ data: MOCK_AI_RESPONSE });
         await waitForStatus(res.body._id);
+        await waitForCount(() => XpEvent.countDocuments({ type: 'quest_accept' }), 1);
         expect(await XpEvent.countDocuments({ type: 'quest_accept' })).toBe(1);
+    });
+});
+
+
+// ═════════════════════════════════════════════
+// Generate — choose-your-quest options
+// ═════════════════════════════════════════════
+
+const MOCK_IDEAS_RESPONSE = {
+    ideas: [
+        { title: 'Idea One', pitch: 'p1', description: 'd1', core_features: ['a'], stretch_goals: [] },
+        { title: 'Idea Two', pitch: 'p2', description: 'd2', core_features: ['b'], stretch_goals: [] },
+        { title: 'Idea Three', pitch: 'p3', description: 'd3', core_features: ['c'], stretch_goals: [] },
+    ],
+};
+
+describe('POST /api/generate/options', () => {
+    let token;
+
+    beforeEach(async () => {
+        const result = await createUserAndToken();
+        token = result.token;
+    });
+
+    it('requires authentication', async () => {
+        const res = await request(app)
+            .post('/api/generate/options')
+            .send(VALID_GENERATE_PAYLOAD);
+        expect(res.status).toBe(401);
+    });
+
+    it('validates input (422 on bad difficulty)', async () => {
+        const res = await request(app)
+            .post('/api/generate/options')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ ...VALID_GENERATE_PAYLOAD, difficulty: 'expert' });
+        expect(res.status).toBe(422);
+    });
+
+    it('returns the ideas from the AI service without saving anything', async () => {
+        const axios = require('axios');
+        axios.post = jest.fn().mockResolvedValueOnce({ data: MOCK_IDEAS_RESPONSE });
+
+        const res = await request(app)
+            .post('/api/generate/options')
+            .set('Authorization', `Bearer ${token}`)
+            .send(VALID_GENERATE_PAYLOAD);
+
+        expect(res.status).toBe(200);
+        expect(res.body.ideas).toHaveLength(3);
+        expect(res.body.ideas[0].title).toBe('Idea One');
+        // Nothing is persisted at the options stage
+        expect(await Project.countDocuments({})).toBe(0);
+    });
+
+    it('returns 502 when the AI service fails', async () => {
+        const axios = require('axios');
+        const err = new Error('connect ECONNREFUSED');
+        err.code = 'ECONNREFUSED';
+        axios.post = jest.fn().mockRejectedValueOnce(err);
+
+        const res = await request(app)
+            .post('/api/generate/options')
+            .set('Authorization', `Bearer ${token}`)
+            .send(VALID_GENERATE_PAYLOAD);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error).toBeDefined();
+    });
+});
+
+
+// ═════════════════════════════════════════════
+// Generate — expanding a pre-chosen idea
+// ═════════════════════════════════════════════
+
+describe('POST /api/generate — chosen_idea', () => {
+    const XpEvent = require('../models/XpEvent');
+    let token;
+
+    beforeEach(async () => {
+        const result = await createUserAndToken();
+        token = result.token;
+    });
+
+    afterEach(async () => {
+        await drainPendingGenerations();
+        await XpEvent.deleteMany({});
+    });
+
+    const CHOSEN = {
+        title: 'Pixel Quest Tracker',
+        description: 'A retro habit tracker.',
+        core_features: ['Track habits', 'Award XP'],
+        stretch_goals: ['Achievements'],
+    };
+
+    it('forwards chosen_idea to the AI service and titles the pending quest after it', async () => {
+        const axios = require('axios');
+        let sentPayload;
+        axios.post = jest.fn().mockImplementationOnce((url, payload) => {
+            sentPayload = payload;
+            return Promise.resolve({ data: MOCK_AI_RESPONSE });
+        });
+
+        const res = await request(app)
+            .post('/api/generate')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ ...VALID_GENERATE_PAYLOAD, chosen_idea: CHOSEN });
+
+        expect(res.status).toBe(202);
+        expect(res.body.title).toBe(CHOSEN.title); // pending shows the picked title
+
+        await waitForStatus(res.body._id);
+        expect(sentPayload.chosen_idea).toBeDefined();
+        expect(sentPayload.chosen_idea.title).toBe(CHOSEN.title);
+    });
+
+    it('ignores a malformed chosen_idea (no title) and generates normally', async () => {
+        const axios = require('axios');
+        let sentPayload;
+        axios.post = jest.fn().mockImplementationOnce((url, payload) => {
+            sentPayload = payload;
+            return Promise.resolve({ data: MOCK_AI_RESPONSE });
+        });
+
+        const res = await request(app)
+            .post('/api/generate')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ ...VALID_GENERATE_PAYLOAD, chosen_idea: { description: 'no title' } });
+
+        expect(res.status).toBe(202);
+        expect(res.body.title).toBe(`Forging: ${VALID_GENERATE_PAYLOAD.topic}`);
+        await waitForStatus(res.body._id);
+        expect(sentPayload.chosen_idea).toBeUndefined();
     });
 });
 

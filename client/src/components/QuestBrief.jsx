@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import JSZip from 'jszip';
 import Milestone from './Milestone';
 import MermaidDiagram from './MermaidDiagram';
 import { buildMarkdown, slugify } from '../utils/exportMarkdown';
+import { buildLlmPrompt } from '../utils/llmPrompt';
 import { DIFFICULTY_XP } from '../utils/xp';
 
 /**
@@ -23,6 +25,18 @@ const QuestBrief = ({
 }) => {
     const navigate = useNavigate();
     const done = new Set(completedMilestones);
+    const [promptCopied, setPromptCopied] = useState(false);
+
+    const llmPrompt = buildLlmPrompt(project);
+    const copyPrompt = async () => {
+        try {
+            await navigator.clipboard.writeText(llmPrompt);
+            setPromptCopied(true);
+            setTimeout(() => setPromptCopied(false), 2000);
+        } catch {
+            /* clipboard blocked — the text is visible to copy manually */
+        }
+    };
 
     const downloadStarterFiles = async () => {
         const zip = new JSZip();
@@ -208,6 +222,21 @@ const QuestBrief = ({
                     </ul>
                 </div>
             )}
+
+            <div className="pixel-card result-section slide-up" style={{ animationDelay: '0.37s' }}>
+                <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <span><span className="icon">🪄</span> AI Build Prompt</span>
+                    <button className="btn btn-secondary" style={{ fontSize: '0.7rem' }} onClick={copyPrompt}>
+                        {promptCopied ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                </h3>
+                <p style={{ fontSize: '0.75rem', opacity: 0.85, margin: '0.5rem 0 0.75rem' }}>
+                    Paste this into ChatGPT, Claude, or any LLM to get a step-by-step guide for building this quest.
+                </p>
+                <div className="file-structure-block" style={{ whiteSpace: 'pre-wrap', maxHeight: '320px', overflowY: 'auto' }}>
+                    {llmPrompt}
+                </div>
+            </div>
 
             <div className="result-actions slide-up" style={{ animationDelay: '0.4s' }}>
                 {project.skeleton_files?.length > 0 && (

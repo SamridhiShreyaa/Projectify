@@ -953,3 +953,78 @@ class TestGitHubToken:
             with patch("httpx.get", side_effect=fake_get):
                 fetch_repo_data("github.com/someone/goodrepo")
         assert "Authorization" not in captured
+
+
+# ─────────────────────────────────────────────
+# /ideas — choose-your-quest options
+# ─────────────────────────────────────────────
+
+class TestIdeas:
+    def setup_method(self):
+        _rate_store.clear()
+
+    def test_ideas_returns_200(self):
+        res = client.post("/ideas", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+
+    def test_ideas_returns_multiple_options(self):
+        res = client.post("/ideas", json=VALID_PAYLOAD)
+        ideas = res.json()["ideas"]
+        assert isinstance(ideas, list)
+        assert len(ideas) >= 2
+
+    def test_each_idea_has_required_fields(self):
+        res = client.post("/ideas", json=VALID_PAYLOAD)
+        for idea in res.json()["ideas"]:
+            assert idea["title"]
+            assert "pitch" in idea
+            assert idea["description"]
+            assert len(idea["core_features"]) >= 1
+
+    def test_ideas_are_distinct(self):
+        res = client.post("/ideas", json=VALID_PAYLOAD)
+        titles = [i["title"] for i in res.json()["ideas"]]
+        assert len(set(titles)) == len(titles)
+
+    def test_ideas_validates_input(self):
+        res = client.post("/ideas", json={**VALID_PAYLOAD, "difficulty": "expert"})
+        assert res.status_code == 422
+
+    def test_ideas_rate_limited(self):
+        for _ in range(5):
+            client.post("/ideas", json=VALID_PAYLOAD)
+        res = client.post("/ideas", json=VALID_PAYLOAD)
+        assert res.status_code == 429
+
+
+# ─────────────────────────────────────────────
+# /generate — expanding a pre-chosen idea
+# ─────────────────────────────────────────────
+
+class TestGenerateChosenIdea:
+    def setup_method(self):
+        _rate_store.clear()
+
+    CHOSEN = {
+        "title": "Pixel Quest Tracker",
+        "description": "A gamified habit tracker with a retro RPG theme.",
+        "core_features": ["Track daily habits", "Award XP for streaks"],
+        "stretch_goals": ["Add achievements"],
+    }
+
+    def test_chosen_idea_title_is_preserved(self):
+        res = client.post("/generate", json={**VALID_PAYLOAD, "chosen_idea": self.CHOSEN})
+        assert res.status_code == 200
+        assert res.json()["title"] == self.CHOSEN["title"]
+
+    def test_chosen_idea_still_expands_full_brief(self):
+        res = client.post("/generate", json={**VALID_PAYLOAD, "chosen_idea": self.CHOSEN})
+        data = res.json()
+        assert data["milestones"]
+        assert data["file_structure"]
+        assert len(data["skeleton_files"]) >= 1
+
+    def test_generate_without_chosen_idea_still_works(self):
+        res = client.post("/generate", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+        assert res.json()["title"]

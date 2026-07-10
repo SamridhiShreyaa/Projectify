@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../api/axios';
+import QuestOptionCard from '../components/QuestOptionCard';
 
 const CUSTOM = '__custom__';
 
@@ -30,6 +31,7 @@ const Home = () => {
     const location = useLocation();
     // Prefill from the repo reviewer's "Forge Improvement Quest" action
     const prefill = location.state?.prefill;
+    const isImprovementQuest = !!prefill?.source_review_id;
 
     const [topic, setTopic] = useState(prefill?.topic ? CUSTOM : '');
     const [customTopic, setCustomTopic] = useState(prefill?.topic || '');
@@ -37,61 +39,153 @@ const Home = () => {
     const [stack, setStack] = useState(prefill?.stack ? CUSTOM : '');
     const [customStack, setCustomStack] = useState(prefill?.stack || '');
     const [hoursPerWeek, setHoursPerWeek] = useState('');
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+
+    // phase: 'form' | 'loading-options' | 'choosing' | 'accepting' | 'forging'
+    const [phase, setPhase] = useState('form');
+    const [ideas, setIdeas] = useState([]);
+    const [params, setParams] = useState(null); // frozen quest params for the chosen idea
     const navigate = useNavigate();
 
-    const handleGenerate = async (e) => {
-        e.preventDefault();
-        setError('');
-
+    const readParams = () => {
         const effectiveTopic = (topic === CUSTOM ? customTopic : topic).trim();
         const effectiveStack = (stack === CUSTOM ? customStack : stack).trim();
 
         if (!effectiveTopic || !difficulty || !effectiveStack || !hoursPerWeek) {
-            setError('All quest parameters required!');
-            return;
+            return { error: 'All quest parameters required!' };
         }
-        if (effectiveTopic.length < 3) {
-            setError('topic must be at least 3 characters');
-            return;
-        }
-        if (effectiveStack.length < 2) {
-            setError('stack must be at least 2 characters');
-            return;
-        }
+        if (effectiveTopic.length < 3) return { error: 'topic must be at least 3 characters' };
+        if (effectiveStack.length < 2) return { error: 'stack must be at least 2 characters' };
 
-        setLoading(true);
-
-        try {
-            const res = await api.post('/generate', {
+        return {
+            params: {
                 topic: effectiveTopic,
                 difficulty,
                 stack: effectiveStack,
                 hours_per_week: parseInt(hoursPerWeek),
-                // Provenance: quest forged from a repo review (ignored if absent)
-                ...(prefill?.source_review_id
-                    ? { source_review_id: prefill.source_review_id }
-                    : {})
+            }
+        };
+    };
+
+    // Forge a full brief (async) — with or without a pre-chosen idea.
+    const forge = async (questParams, chosenIdea) => {
+        try {
+            const res = await api.post('/generate', {
+                ...questParams,
+                ...(chosenIdea ? { chosen_idea: chosenIdea } : {}),
+                ...(prefill?.source_review_id ? { source_review_id: prefill.source_review_id } : {}),
             });
             navigate(`/result/${res.data._id}`, { state: { project: res.data } });
         } catch (err) {
             setError(err.response?.data?.error || 'Quest generation failed. Try again.');
-        } finally {
-            setLoading(false);
+            // Improvement quests have no options step to return to.
+            setPhase(isImprovementQuest ? 'form' : 'choosing');
         }
     };
 
-    if (loading) {
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        const { error: validationError, params: questParams } = readParams();
+        if (validationError) {
+            setError(validationError);
+            return;
+        }
+        setParams(questParams);
+
+        // Improvement quests target one specific repo — skip the options step
+        // and forge straight from the repo-derived parameters.
+        if (isImprovementQuest) {
+            setPhase('forging');
+            forge(questParams);
+            return;
+        }
+
+        // Otherwise, fetch a few distinct ideas to choose from.
+        setPhase('loading-options');
+        try {
+            const res = await api.post('/generate/options', questParams);
+            const options = Array.isArray(res.data?.ideas) ? res.data.ideas : [];
+            if (options.length === 0) throw new Error('no ideas');
+            setIdeas(options);
+            setPhase('choosing');
+        } catch (err) {
+            setError(err.response?.data?.error || 'Could not scout quests. Try again.');
+            setPhase('form');
+        }
+    };
+
+    const handleAccept = (idea) => {
+        if (!params) return;
+        setPhase('accepting');
+        forge(params, idea);
+    };
+
+    // ---------- Loading screens ----------
+    if (phase === 'loading-options' || phase === 'accepting' || phase === 'forging') {
+        const text = phase === 'loading-options'
+            ? '🗺 Scouting quests for you...'
+            : '⚔ Forging your quest...';
+        const sub = phase === 'loading-options'
+            ? 'The quest master is drafting a few options'
+            : 'The quest master is preparing your adventure';
         return (
             <div className="page-container">
                 <div className="container">
                     <div className="loading-overlay">
                         <div className="loading-spinner-lg"></div>
-                        <p className="loading-text">⚔ Generating your quest...</p>
+                        <p className="loading-text">{text}</p>
                         <p style={{ color: 'var(--pixel-dim)', fontSize: '0.8rem', fontFamily: 'var(--pixel-body)' }}>
-                            The quest master is preparing your adventure
+                            {sub}
                         </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ---------- Choose-your-quest step ----------
+    if (phase === 'choosing') {
+        return (
+            <div className="page-container">
+                <div className="container">
+                    <div className="hero slide-up">
+                        <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }} className="pixel-float">🗺️</div>
+                        <h1>
+                            <span className="gradient-text">CHOOSE</span>{' '}
+                            <span style={{ color: 'var(--pixel-white)' }}>YOUR QUEST</span>
+                        </h1>
+                        <p>
+                            The quest master forged {ideas.length} adventures for{' '}
+                            <strong>{params?.topic}</strong>. Expand each to read the details,
+                            then accept the one that calls to you.
+                        </p>
+                    </div>
+
+                    {error && (
+                        <div className="error-message" style={{ marginBottom: '1rem' }}>⚠ {error}</div>
+                    )}
+
+                    {ideas.map((idea, i) => (
+                        <QuestOptionCard
+                            key={i}
+                            idea={idea}
+                            index={i}
+                            input={params}
+                            onAccept={handleAccept}
+                            accepting={phase === 'accepting'}
+                            disabled={phase === 'accepting'}
+                        />
+                    ))}
+
+                    <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => { setPhase('form'); setIdeas([]); setError(''); }}
+                        >
+                            ↩ Change Quest Parameters
+                        </button>
                     </div>
                 </div>
             </div>
@@ -109,7 +203,7 @@ const Home = () => {
                     </h1>
                     <p>
                         Choose your quest parameters and our AI Quest Master will forge
-                        a complete project adventure with milestones and loot.
+                        a few project adventures for you to pick from.
                     </p>
                 </div>
 
@@ -125,7 +219,7 @@ const Home = () => {
                         ═══ CONFIGURE YOUR QUEST ═══
                     </div>
 
-                    <form onSubmit={handleGenerate}>
+                    <form onSubmit={handleSubmit}>
                         {prefill?.source_repo && (
                             <div style={{
                                 fontFamily: 'var(--pixel-font)',
@@ -222,7 +316,7 @@ const Home = () => {
                         </div>
 
                         <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%' }}>
-                            ⚔ ACCEPT QUEST
+                            {isImprovementQuest ? '⚔ FORGE IMPROVEMENT QUEST' : '⚔ SCOUT QUESTS'}
                         </button>
                     </form>
                 </div>
@@ -232,7 +326,9 @@ const Home = () => {
                     fontFamily: 'var(--pixel-font)', fontSize: '0.4rem',
                     color: 'var(--pixel-dim)', letterSpacing: '0.1em'
                 }}>
-                    EACH QUEST IS SAVED TO YOUR QUEST LOG
+                    {isImprovementQuest
+                        ? 'YOUR IMPROVEMENT QUEST IS SAVED TO YOUR QUEST LOG'
+                        : 'PICK FROM 3 OPTIONS — ONLY YOUR CHOICE IS SAVED TO YOUR QUEST LOG'}
                 </div>
             </div>
         </div>

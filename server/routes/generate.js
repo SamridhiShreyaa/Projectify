@@ -72,13 +72,18 @@ function generationErrorFor(e) {
     return 'Failed to generate project. Please try again.';
 }
 
+function aiServiceUrl() {
+    let aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8001';
+    if (!aiUrl.startsWith('http')) {
+        aiUrl = `http://${aiUrl}`;
+    }
+    return aiUrl;
+}
+
 // Runs after the response is sent — updates the pending project in place.
-async function runGeneration(projectId, userId, { topic, difficulty, stack, hours_per_week }, sourceReviewId) {
+async function runGeneration(projectId, userId, { topic, difficulty, stack, hours_per_week }, sourceReviewId, chosenIdea) {
     try {
-        let aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8001';
-        if (!aiUrl.startsWith('http')) {
-            aiUrl = `http://${aiUrl}`;
-        }
+        const aiUrl = aiServiceUrl();
 
         const aiResponse = await axios.post(
             `${aiUrl}/generate`,
@@ -86,7 +91,10 @@ async function runGeneration(projectId, userId, { topic, difficulty, stack, hour
                 topic: topic.trim(),
                 difficulty,
                 stack: stack.trim(),
-                hours_per_week: Number(hours_per_week)
+                hours_per_week: Number(hours_per_week),
+                // When the user picked an idea from the options step, expand it
+                // directly instead of generating a fresh one.
+                ...(chosenIdea ? { chosen_idea: chosenIdea } : {})
             },
             { timeout: 150000 } // the pipeline chains 3+ sequential LLM calls; free-tier models can take 30-50s each
         );
@@ -129,6 +137,51 @@ async function runGeneration(projectId, userId, { topic, difficulty, stack, hour
     }
 }
 
+// Coerce a client-supplied chosen idea into a safe, bounded shape. Returns
+// null when there's no usable idea (so generation falls back to fresh ideation).
+function sanitizeChosenIdea(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const title = typeof raw.title === 'string' ? raw.title.trim().slice(0, 300) : '';
+    if (!title) return null;
+    const strList = (v) => Array.isArray(v)
+        ? v.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 300)).slice(0, 12)
+        : [];
+    return {
+        title,
+        description: typeof raw.description === 'string' ? raw.description.trim().slice(0, 2000) : '',
+        core_features: strList(raw.core_features),
+        stretch_goals: strList(raw.stretch_goals)
+    };
+}
+
+// ---------- Options: 3 ideas to choose from (synchronous, no DB write) ----------
+router.post('/options', authMiddleware, rateLimit, async (req, res) => {
+    const errors = validateInput(req.body);
+    if (errors.length > 0) {
+        return res.status(422).json({ error: 'Validation failed', details: errors });
+    }
+
+    const { topic, difficulty, stack, hours_per_week } = req.body;
+
+    try {
+        const aiResponse = await axios.post(
+            `${aiServiceUrl()}/ideas`,
+            {
+                topic: topic.trim(),
+                difficulty,
+                stack: stack.trim(),
+                hours_per_week: Number(hours_per_week)
+            },
+            { timeout: 90000 } // a single LLM call producing ~3 ideas
+        );
+        const ideas = Array.isArray(aiResponse.data?.ideas) ? aiResponse.data.ideas : [];
+        return res.json({ ideas });
+    } catch (e) {
+        console.error('Options error:', e.response?.data || e.message);
+        return res.status(502).json({ error: generationErrorFor(e) });
+    }
+});
+
 // ---------- Route ----------
 router.post('/', authMiddleware, rateLimit, async (req, res) => {
     // Validate
@@ -139,11 +192,13 @@ router.post('/', authMiddleware, rateLimit, async (req, res) => {
 
     const { topic, difficulty, stack, hours_per_week, source_review_id } = req.body;
     const input = { topic, difficulty, stack, hours_per_week: Number(hours_per_week) };
+    const chosenIdea = sanitizeChosenIdea(req.body.chosen_idea);
 
     try {
         const pending = await Project.create({
             userId: req.user.id,
-            title: `Forging: ${topic.trim()}`,
+            // Show the picked idea's title while it forges, if one was chosen.
+            title: chosenIdea ? chosenIdea.title : `Forging: ${topic.trim()}`,
             status: 'pending',
             input
         });
@@ -152,7 +207,7 @@ router.post('/', authMiddleware, rateLimit, async (req, res) => {
 
         // Intentionally not awaited — the response above is the full contract
         // for this request; runGeneration finishes the document later.
-        runGeneration(pending._id, req.user.id, input, source_review_id);
+        runGeneration(pending._id, req.user.id, input, source_review_id, chosenIdea);
     } catch (e) {
         res.status(500).json({ error: 'Failed to start quest generation. Please try again.' });
     }
